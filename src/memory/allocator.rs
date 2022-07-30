@@ -47,7 +47,6 @@ impl From<Arc<DBM<Valid>>> for DBMPtr {
 }
 
 pub trait DBMAllocator: Send + Sync {
-    fn init() -> Arc<Self>;
     fn to_ptr(&self, dbm: DBM<Valid>) -> DBMPtr;
 }
 
@@ -58,13 +57,15 @@ pub struct SharedDBMAllocator {
     dbms: RwLock<HashMap<HashType, Weak<DBM<Valid>>>>,
 }
 
-impl DBMAllocator for SharedDBMAllocator {
-    fn init() -> Arc<Self> {
+impl SharedDBMAllocator {
+    pub fn init() -> Arc<Self> {
         Arc::new(SharedDBMAllocator {
             dbms: RwLock::new(HashMap::default()),
         })
     }
+}
 
+impl DBMAllocator for SharedDBMAllocator {
     fn to_ptr(&self, mut dbm: DBM<Valid>) -> DBMPtr {
         let hash = dbm.hash();
         println!("Hash: {hash}");
@@ -83,16 +84,55 @@ impl DBMAllocator for SharedDBMAllocator {
     }
 }
 
+pub struct BucketDBMAllocator {
+    n_buckets: usize,
+    buckets: Vec<RwLock<HashMap<HashType, Weak<DBM<Valid>>>>>,
+}
+
+impl BucketDBMAllocator {
+    pub fn init(n_buckets: usize) -> Arc<BucketDBMAllocator> {
+        Arc::new(Self {
+            n_buckets,
+            buckets: (0..n_buckets)
+                .into_iter()
+                .map(|_| RwLock::new(HashMap::default()))
+                .collect(),
+        })
+    }
+
+    fn to_ptr(&self, mut dbm: DBM<Valid>) -> DBMPtr {
+        let hash = dbm.hash();
+
+        let bucket = hash as usize % self.n_buckets;
+        let dbms = &self.buckets[bucket];
+
+        println!("Hash: {hash}");
+        if let Some(res) = dbms.read().expect("RwLock Poisoned").get(&hash) {
+            if let Some(arc) = res.upgrade() {
+                return DBMPtr::from_arc(arc);
+            }
+        }
+
+        let arc = Arc::new(dbm);
+        dbms.write()
+            .expect("RwLock Poisoned")
+            .insert(hash, Arc::downgrade(&arc));
+        return DBMPtr::from_arc(arc);
+    }
+}
+
 /// A thread safe DBM Allocator which does not maintain internal state.
 ///
 /// Immutable cloning of retrieved DBMs remains inexpensive due to the Arc return type
 pub struct BaseDBMAllocator;
 
-impl DBMAllocator for BaseDBMAllocator {
-    fn init() -> Arc<Self> {
+impl BaseDBMAllocator {
+    pub fn init() -> Arc<Self> {
         Arc::new(BaseDBMAllocator)
     }
+}
 
+impl DBMAllocator for BaseDBMAllocator {
     fn to_ptr(&self, dbm: DBM<Valid>) -> DBMPtr {
         DBMPtr::from_dbm(dbm)
     }
