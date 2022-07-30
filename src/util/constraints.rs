@@ -39,7 +39,7 @@ impl Constraint {
     }
 }*/
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Neg)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Neg, Hash)]
 pub struct RawInequality {
     inner: InnerRawInequality,
 }

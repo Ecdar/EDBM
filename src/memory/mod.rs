@@ -1,1 +1,1 @@
-mod allocator;
+pub mod allocator;

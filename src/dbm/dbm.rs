@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     fmt::Display,
     ops::{Index, IndexMut},
 };
@@ -13,6 +14,7 @@ use crate::{
         },
     },
 };
+use std::hash::{Hash, Hasher};
 
 use super::minimal_graph::{get_DBM_bit_matrix, BitMatrix};
 
@@ -65,7 +67,9 @@ impl Dirty {
 
 /// A Valid DBM is always closed and never empty
 #[derive(Clone)]
-pub struct Valid;
+pub struct Valid {
+    hash: Option<u64>,
+}
 
 /// An Unsafe DBM is not necessarily closed nor non-empty.
 ///
@@ -77,14 +81,10 @@ impl DBMState for Dirty {}
 impl DBMState for Unsafe {}
 
 macro_rules! check_indices {
-    // The pattern for a single `eval`
     ($self:expr, $e:expr) => {
-            //assert!($e >= 0 && $e < $self.dim);
             assert!($e < $self.dim);
-
     };
 
-    // Decompose multiple `eval`s recursively
     ($self:expr, $e:expr, $($es:expr),+) => {{
         check_indices! { $self, $e }
         check_indices! { $self, $($es),+ }
@@ -92,6 +92,21 @@ macro_rules! check_indices {
 }
 
 impl DBM<Valid> {
+    pub fn hash(&mut self) -> u64 {
+        self.state.hash.unwrap_or_else(|| self.calculate_hash())
+    }
+
+    fn calculate_hash(&mut self) -> u64 {
+        let mut s = DefaultHasher::new();
+
+        self.dim.hash(&mut s);
+        self.data.hash(&mut s);
+
+        let hash = s.finish();
+        self.state.hash = Some(hash);
+        hash
+    }
+
     /// Constrains the Valid DBM with `dbm[i,j]=constraint` and closes it immediately so it remains Valid.
     pub fn constrain_and_close_raw(
         self,
@@ -178,7 +193,7 @@ impl DBM<Valid> {
         DBM {
             dim,
             data: vec![LE_ZERO; dim * dim],
-            state: Valid,
+            state: Valid { hash: None },
         }
     }
 
@@ -718,7 +733,7 @@ impl DBM<Unsafe> {
         DBM {
             dim: self.dim,
             data: self.data,
-            state: Valid,
+            state: Valid { hash: None },
         }
     }
 }
