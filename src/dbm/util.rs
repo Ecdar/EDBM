@@ -35,3 +35,34 @@ pub fn worst_value(
 
     dbm_ij - dbm1[(i, j)]
 }
+
+pub fn dbm_list_union(mut left: Vec<DBM<Valid>>, mut right: Vec<DBM<Valid>>) -> Vec<DBM<Valid>> {
+    let mut max_i = left.len();
+    let mut max_j = right.len();
+    let mut i = 0;
+
+    while i < max_i {
+        let mut j = 0;
+        while j < max_j {
+            match left[i].relation_to(&right[j]) {
+                super::DBMRelation::Equal => {
+                    left.swap_remove(i);
+                    max_i -= 1;
+                }
+                super::DBMRelation::Subset => {
+                    left.swap_remove(i);
+                    max_i -= 1;
+                }
+                super::DBMRelation::Superset => {
+                    right.swap_remove(j);
+                    max_j -= 1;
+                }
+                super::DBMRelation::Different => j += 1,
+            }
+        }
+        i += 1;
+    }
+
+    left.append(&mut right);
+    left
+}

@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
-    fmt::Display,
-    ops::{Index, IndexMut},
+    fmt::{Debug, Display},
+    ops::{BitAnd, Index, IndexMut},
 };
 
 use crate::{
@@ -25,6 +25,57 @@ pub struct DBM<State: DBMState> {
     pub dim: ClockIndex,
     data: Vec<RawInequality>,
     state: State,
+}
+
+use derive_more::{BitAndAssign, BitOrAssign};
+
+#[derive(PartialEq, Eq)]
+pub enum DBMRelation {
+    Different,
+    Superset,
+    Subset,
+    Equal,
+}
+
+impl Debug for DBMRelation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Different => write!(f, "Different"),
+            Self::Superset => write!(f, "Superset"),
+            Self::Subset => write!(f, "Subset"),
+            Self::Equal => write!(f, "Equal"),
+        }
+    }
+}
+
+fn try_subset(
+    dbm1: &Vec<RawInequality>,
+    dbm2: &Vec<RawInequality>,
+    i: usize,
+    n: usize,
+) -> DBMRelation {
+    for k in i..n {
+        if dbm1[k] > dbm2[k] {
+            return DBMRelation::Different;
+        }
+    }
+
+    DBMRelation::Subset
+}
+
+fn try_superset(
+    dbm1: &Vec<RawInequality>,
+    dbm2: &Vec<RawInequality>,
+    i: usize,
+    n: usize,
+) -> DBMRelation {
+    for k in i..n {
+        if dbm1[k] < dbm2[k] {
+            return DBMRelation::Different;
+        }
+    }
+
+    DBMRelation::Superset
 }
 
 /// A Dirty DBM is not necessarily closed nor non-empty.
@@ -74,7 +125,10 @@ pub struct Valid {
 /// An Unsafe DBM is not necessarily closed nor non-empty.
 ///
 /// Once unsafe operations are done the DBM can be asserted valid (Closed, non-empty, ok diagonal etc.) using the unsafe fn `assert_valid`
-pub(super) struct Unsafe;
+pub(super) struct Unsafe {
+    changed: bool,
+    hash: Option<u64>,
+}
 
 impl DBMState for Valid {}
 impl DBMState for Dirty {}
@@ -105,6 +159,63 @@ impl DBM<Valid> {
         let hash = s.finish();
         self.state.hash = Some(hash);
         hash
+    }
+
+    pub fn relation_to(&self, other: &Self) -> DBMRelation {
+        use DBMRelation::*;
+        assert_eq!(self.dim, other.dim);
+        let dim = self.dim;
+
+        let dbm1 = &self.data;
+        let dbm2 = &other.data;
+
+        let n = dim * dim - 1;
+
+        for i in 1..n {
+            if dbm1[i] != dbm2[i] {
+                if dbm1[i] > dbm2[i] {
+                    return try_superset(dbm1, dbm2, i, n);
+                } else {
+                    return try_subset(dbm1, dbm2, i, n);
+                }
+            }
+        }
+
+        return Equal;
+    }
+
+    pub fn subset_eq(&self, other: &Self) -> bool {
+        assert_eq!(self.dim, other.dim);
+        let dim = self.dim;
+        let n = dim * dim - 1;
+
+        try_subset(&self.data, &other.data, 1, n) == DBMRelation::Subset
+    }
+
+    pub fn superset_eq(&self, other: &Self) -> bool {
+        assert_eq!(self.dim, other.dim);
+        let dim = self.dim;
+        let n = dim * dim - 1;
+
+        try_superset(&self.data, &other.data, 1, n) == DBMRelation::Superset
+    }
+
+    pub fn eq(&self, other: &Self) -> bool {
+        assert_eq!(self.dim, other.dim);
+        let dim = self.dim;
+
+        let dbm1 = &self.data;
+        let dbm2 = &other.data;
+
+        let n = dim * dim - 1;
+
+        for i in 1..n {
+            if dbm1[i] != dbm2[i] {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Constrains the Valid DBM with `dbm[i,j]=constraint` and closes it immediately so it remains Valid.
@@ -271,19 +382,6 @@ impl DBM<Valid> {
         return true;
     }
 
-    pub fn is_subset_eq(&self, other: &Self) -> bool {
-        assert_eq!(self.dim, other.dim);
-        let dim = self.dim;
-        for i in 0..dim {
-            for j in 0..dim {
-                if i != j && self[(i, j)] > other[(i, j)] {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
     pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
         assert!(clock > 0);
 
@@ -337,7 +435,11 @@ impl DBM<Valid> {
         }
     }
 
-    fn internal_subtract_dbm(self, rhs: &DBM<Valid>, matrix: &BitMatrix) -> Vec<DBM<Valid>> {
+    pub(super) fn internal_subtract_dbm(
+        self,
+        rhs: &DBM<Valid>,
+        matrix: &BitMatrix,
+    ) -> Vec<DBM<Valid>> {
         let dim = self.dim;
         let mut dbm1 = self;
         let n_cons = matrix.n_cons;
@@ -430,6 +532,21 @@ impl DBM<Valid> {
 
         result
     }
+
+    fn make_unsafe(self) -> DBM<Unsafe> {
+        let dbm = DBM {
+            dim: self.dim,
+            data: self.data,
+            state: Unsafe {
+                changed: false,
+                hash: self.state.hash,
+            },
+        };
+
+        debug_assert!(dbm.is_diagonal_ok_and_clocks_positive());
+
+        dbm
+    }
 }
 
 impl TryInto<DBM<Valid>> for DBM<Dirty> {
@@ -437,20 +554,6 @@ impl TryInto<DBM<Valid>> for DBM<Dirty> {
 
     fn try_into(self) -> Result<DBM<Valid>, Self::Error> {
         self.close().ok_or(())
-    }
-}
-
-impl<T: DBMState> DBM<T> {
-    fn make_unsafe(self) -> DBM<Unsafe> {
-        let dbm = DBM {
-            dim: self.dim,
-            data: self.data,
-            state: Unsafe,
-        };
-
-        debug_assert!(dbm.is_diagonal_ok_and_clocks_positive());
-
-        dbm
     }
 }
 
@@ -599,6 +702,21 @@ impl DBM<Dirty> {
 
         self
     }
+
+    fn make_unsafe(self) -> DBM<Unsafe> {
+        let dbm = DBM {
+            dim: self.dim,
+            data: self.data,
+            state: Unsafe {
+                changed: self.state.is_dirty(),
+                hash: None,
+            },
+        };
+
+        debug_assert!(dbm.is_diagonal_ok_and_clocks_positive());
+
+        dbm
+    }
 }
 
 impl DBM<Unsafe> {
@@ -675,6 +793,10 @@ impl DBM<Unsafe> {
         check_indices!(self, b, a);
         assert!(a != b);
 
+        if !self.state.changed {
+            return Some(unsafe { self.assert_valid() });
+        }
+
         let mut dbm = self;
 
         if dbm.dim <= 2 {
@@ -730,10 +852,16 @@ impl DBM<Unsafe> {
     unsafe fn assert_valid(self) -> DBM<Valid> {
         debug_assert!(self.is_valid());
 
+        let hash = if !self.state.changed {
+            self.state.hash
+        } else {
+            None
+        };
+
         DBM {
             dim: self.dim,
             data: self.data,
-            state: Valid { hash: None },
+            state: Valid { hash },
         }
     }
 }
@@ -768,6 +896,7 @@ impl IndexMut<(ClockIndex, ClockIndex)> for DBM<Dirty> {
 
 impl IndexMut<(ClockIndex, ClockIndex)> for DBM<Unsafe> {
     fn index_mut(&mut self, index: (ClockIndex, ClockIndex)) -> &mut Self::Output {
+        self.state.changed = true;
         let (x, y) = index;
         &mut self.data[x * self.dim + y]
     }
@@ -801,12 +930,11 @@ impl<T: DBMState> Display for DBM<T> {
     }
 }
 
+#[allow(unused)]
 mod test {
-    #[allow(unused)]
-    use crate::util::bit_conversion::{u32s_to_represent_bits, u32s_to_represent_bytes};
-
-    #[allow(unused)]
     use super::DBM;
+    use crate::dbm::DBMRelation;
+    use crate::util::bit_conversion::{u32s_to_represent_bits, u32s_to_represent_bytes};
 
     #[test]
     fn dbm1() {
@@ -944,6 +1072,40 @@ mod test {
         }
 
         assert_eq!(res.len(), 1);
+    }
+
+    #[test]
+    fn dbm_order1() {
+        let zero = DBM::zero(8);
+        let init = DBM::init(8);
+
+        assert!(zero.subset_eq(&init));
+        assert!(init.superset_eq(&zero));
+        assert!(!zero.eq(&init));
+        assert!(zero.eq(&zero));
+        assert!(init.eq(&init));
+        assert_eq!(zero.relation_to(&init), DBMRelation::Subset);
+        assert_eq!(init.relation_to(&zero), DBMRelation::Superset);
+    }
+
+    #[test]
+    fn dbm_order2() {
+        use super::Inequality::*;
+        let zero = DBM::zero(8);
+        let init = DBM::init(8);
+        let five = init
+            .constrain_and_close(1, 0, LE(5))
+            .unwrap()
+            .constrain_and_close(0, 1, LE(-5))
+            .unwrap();
+
+        assert!(!zero.subset_eq(&five));
+        assert!(!zero.superset_eq(&five));
+        assert!(!zero.eq(&five));
+        assert!(zero.eq(&zero));
+        assert!(five.eq(&five));
+        assert_eq!(zero.relation_to(&five), DBMRelation::Different);
+        assert_eq!(five.relation_to(&zero), DBMRelation::Different);
     }
 
     #[test]

@@ -84,6 +84,10 @@ impl DBMAllocator for SharedDBMAllocator {
     }
 }
 
+/// A thread safe DBM Allocator which tries to have equal (hash) DBMs share memory in a bucket of hash tables.
+///
+/// The bucket approach allows for more concurrent writes.
+/// The shared memory is read/updated through a RwLock ensuring thread safety but causing congestion with many writes.
 pub struct BucketDBMAllocator {
     n_buckets: usize,
     buckets: Vec<RwLock<HashMap<HashType, Weak<DBM<Valid>>>>>,
@@ -99,7 +103,9 @@ impl BucketDBMAllocator {
                 .collect(),
         })
     }
+}
 
+impl DBMAllocator for BucketDBMAllocator {
     fn to_ptr(&self, mut dbm: DBM<Valid>) -> DBMPtr {
         let hash = dbm.hash();
 
@@ -143,14 +149,14 @@ mod test {
 
     use crate::{
         dbm::DBM,
-        memory::allocator::{BaseDBMAllocator, SharedDBMAllocator},
+        memory::allocator::{BaseDBMAllocator, BucketDBMAllocator, SharedDBMAllocator},
     };
 
     use super::DBMAllocator;
 
     #[test]
     fn test_alloc() {
-        let alloc = BaseDBMAllocator::init();
+        let alloc = BucketDBMAllocator::init(5);
         let mut handles = vec![];
 
         for _ in 0..10 {
