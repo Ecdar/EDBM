@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
-    default,
+    collections::{HashMap},
     sync::{Arc, RwLock, Weak},
 };
 
@@ -144,6 +143,7 @@ impl DBMAllocator for BaseDBMAllocator {
     }
 }
 
+#[allow(unused)]
 mod test {
     use std::{sync::Arc, thread, time::Duration};
 

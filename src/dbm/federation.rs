@@ -1,17 +1,11 @@
-use std::{cmp::Ordering, fmt::Display, sync::Arc};
+use std::fmt::Display;
 
 use crate::{
     memory::allocator::{DBMAllocator, DBMPtr},
-    util::{
-        bit_conversion::BitField,
-        constraints::{
-            raw_constants::{LS_INFINITY, ZERO},
-            Bound, ClockIndex,
-        },
-    },
+    util::constraints::ClockIndex,
 };
 
-use super::{minimal_graph::get_DBM_bit_matrix, util::dbm_list_union, DBMRelation, Valid, DBM};
+use super::{minimal_graph::get_dbm_bit_matrix, util::dbm_list_union, DBMRelation, Valid, DBM};
 
 #[derive(Clone)]
 pub struct SharedFederation {
@@ -81,7 +75,7 @@ impl OwnedFederation {
 
         for dbm in self.dbms {
             if dbm.intersects(other) {
-                let mingraph = mingraph.get_or_insert_with(|| get_DBM_bit_matrix(other));
+                let mingraph = mingraph.get_or_insert_with(|| get_dbm_bit_matrix(other));
                 if mingraph.n_cons == 0 {
                     // That means we remove everything.
                     return OwnedFederation::EMPTY;

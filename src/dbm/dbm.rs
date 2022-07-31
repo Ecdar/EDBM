@@ -1,7 +1,7 @@
 use std::{
     collections::hash_map::DefaultHasher,
     fmt::{Debug, Display},
-    ops::{BitAnd, Index, IndexMut},
+    ops::{Index, IndexMut},
 };
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 };
 use std::hash::{Hash, Hasher};
 
-use super::minimal_graph::{get_DBM_bit_matrix, BitMatrix};
+use super::minimal_graph::{get_dbm_bit_matrix, BitMatrix};
 
 pub trait DBMState: Sized {}
 
@@ -26,8 +26,6 @@ pub struct DBM<State: DBMState> {
     data: Vec<RawInequality>,
     state: State,
 }
-
-use derive_more::{BitAndAssign, BitOrAssign};
 
 #[derive(PartialEq, Eq)]
 pub enum DBMRelation {
@@ -424,7 +422,7 @@ impl DBM<Valid> {
     /// Tighten the dbm with the negated constraints of rhs dbm
     pub fn subtract_dbm(self, rhs: &DBM<Valid>) -> Vec<DBM<Valid>> {
         if self.intersects(rhs) {
-            let matrix = get_DBM_bit_matrix(rhs);
+            let matrix = get_dbm_bit_matrix(rhs);
             if matrix.n_cons == 0 {
                 // dbm2 is unconstrained => result = empty
                 return vec![];

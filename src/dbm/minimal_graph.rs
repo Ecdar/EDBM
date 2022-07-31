@@ -5,15 +5,6 @@ use crate::util::{
 
 use super::{DBMState, DBM};
 
-struct MinimalGraph {
-    info: u32,
-}
-
-/*struct BitMatrix {
-    bits: BitField,
-    n_constraints: u32,
-}*/
-
 pub struct BitMatrix {
     pub bits: BitField,
     pub n_cons: u32,
@@ -25,12 +16,12 @@ impl BitMatrix {
     }
 }
 
-pub fn get_DBM_bit_matrix<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
+pub fn get_dbm_bit_matrix<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
     //analyze_for_min_DBM(dbm)
-    clean_bit_matrix(dbm, analyze_for_min_DBM(dbm))
+    clean_bit_matrix(dbm, analyze_for_min_dbm(dbm))
 }
 
-fn analyze_for_min_DBM<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
+fn analyze_for_min_dbm<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
     let dim = dbm.dim;
     let mut next = vec![0usize; dim];
     let mut bits = BitField::zeros(dim * dim);
@@ -118,15 +109,16 @@ fn clean_bit_matrix<T: DBMState>(dbm: &DBM<T>, bit_matrix: BitMatrix) -> BitMatr
     }
 }
 
+#[allow(unused)]
 mod test {
     use crate::dbm::{minimal_graph::clean_bit_matrix, DBM};
 
-    use super::analyze_for_min_DBM;
+    use super::analyze_for_min_dbm;
 
     #[test]
     fn test_zero() {
         let dbm = DBM::zero(5);
-        let (size, bits) = analyze_for_min_DBM(&dbm).split();
+        let (size, bits) = analyze_for_min_dbm(&dbm).split();
 
         println!("DBM: {dbm}");
         println!("size: {size}");
@@ -138,7 +130,7 @@ mod test {
     #[test]
     fn test_zero_clean() {
         let dbm = DBM::zero(5);
-        let bm = analyze_for_min_DBM(&dbm);
+        let bm = analyze_for_min_dbm(&dbm);
         let (bits, size) = clean_bit_matrix(&dbm, bm).split();
 
         println!("DBM: {dbm}");
@@ -151,7 +143,7 @@ mod test {
     #[test]
     fn test_init() {
         let dbm = DBM::init(5);
-        let (bits, size) = analyze_for_min_DBM(&dbm).split();
+        let (bits, size) = analyze_for_min_dbm(&dbm).split();
 
         println!("DBM: {dbm}");
         println!("size: {size}");
@@ -163,7 +155,7 @@ mod test {
     #[test]
     fn test_init_clean() {
         let dbm = DBM::init(5);
-        let bm = analyze_for_min_DBM(&dbm);
+        let bm = analyze_for_min_dbm(&dbm);
         let (bits, size) = clean_bit_matrix(&dbm, bm).split();
 
         println!("DBM: {dbm}");

@@ -1,4 +1,4 @@
-use std::{fmt::Display, slice::Iter};
+use std::fmt::Display;
 
 use super::constraints::ClockIndex;
 
@@ -38,11 +38,6 @@ impl BitField {
     }
 
     pub fn index(bit: usize) -> (usize, usize) {
-        /*if bit == 0 {
-            return (0, 0);
-        }
-        let u32s = u32s_to_represent_bits(bit);*/
-
         (bit / 32, bit % 32)
     }
 
@@ -134,7 +129,6 @@ impl BitField {
     }
 
     pub fn get_ijs(&self, dim: ClockIndex, n_cons: usize) -> Vec<(usize, usize)> {
-        //let dim = dim as u32;
         let mut ijs = Vec::with_capacity(n_cons);
         let mut found = 0;
         let mut i = 0usize;
@@ -165,56 +159,6 @@ impl BitField {
 
         ijs
     }
-
-    /*pub fn get_indices_satisfying<F>(
-        self,
-        dim: ClockIndex,
-        n_constraints: u32,
-        pred: F,
-    ) -> Vec<usize>
-    where
-        F: Fn(u32, u32) -> bool,
-    {
-        let dim = dim as u32;
-        let indices = vec![];
-        let mut i = 0;
-        let mut j = 0;
-        let mut k = n_constraints;
-        loop {
-            let mut count = 32;
-            for &b in &self.u32s {
-                let mut b = b;
-                if b == 0 {
-                    continue;
-                }
-
-                while (b & 1) == 0 {
-                    count -= 1;
-                    b >>= 1;
-                }
-
-                fix_ij(&mut i, &mut j, dim);
-
-                if pred(i, j) {
-                    indices.push((i, j))
-                }
-
-                count -= 1;
-                b >>= 1;
-                j += 1;
-            }
-        }
-
-        indices
-    }*/
-}
-
-#[inline]
-fn fix_ij(i: &mut u32, j: &mut u32, dim: u32) {
-    while *j >= dim {
-        *j -= dim;
-        *i += 1
-    }
 }
 
 impl Display for BitField {
@@ -234,9 +178,8 @@ impl Display for BitField {
     }
 }
 
+#[allow(unused)]
 mod test {
-    use std::fmt::Binary;
-
     use super::BitField;
 
     #[test]
