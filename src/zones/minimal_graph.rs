@@ -111,7 +111,7 @@ fn clean_bit_matrix<T: DBMState>(dbm: &DBM<T>, bit_matrix: BitMatrix) -> BitMatr
 
 #[allow(unused)]
 mod test {
-    use crate::dbm::{minimal_graph::clean_bit_matrix, DBM};
+    use crate::zones::{minimal_graph::clean_bit_matrix, DBM};
 
     use super::analyze_for_min_dbm;
 

@@ -66,3 +66,32 @@ pub fn dbm_list_union(mut left: Vec<DBM<Valid>>, mut right: Vec<DBM<Valid>>) -> 
     left.append(&mut right);
     left
 }
+
+pub fn dbm_list_reduce(mut list: Vec<DBM<Valid>>) -> Vec<DBM<Valid>> {
+    let mut max = list.len();
+    let mut i = 0;
+
+    while i < max {
+        let mut j = i + 1;
+        while j < max {
+            match list[i].relation_to(&list[j]) {
+                super::DBMRelation::Equal => {
+                    list.swap_remove(j);
+                    max -= 1;
+                }
+                super::DBMRelation::Subset => {
+                    list.swap_remove(i);
+                    max -= 1;
+                }
+                super::DBMRelation::Superset => {
+                    list.swap_remove(j);
+                    max -= 1;
+                }
+                super::DBMRelation::Different => j += 1,
+            }
+        }
+        i += 1;
+    }
+
+    list
+}

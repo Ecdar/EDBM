@@ -5,7 +5,6 @@ use std::{
 };
 
 use crate::{
-    dbm::util::worst_value,
     util::{
         bit_conversion::BitField,
         constraints::{
@@ -13,6 +12,7 @@ use crate::{
             Bound, ClockIndex, Inequality, RawInequality,
         },
     },
+    zones::util::worst_value,
 };
 use std::hash::{Hash, Hasher};
 
@@ -46,12 +46,7 @@ impl Debug for DBMRelation {
     }
 }
 
-fn try_subset(
-    dbm1: &Vec<RawInequality>,
-    dbm2: &Vec<RawInequality>,
-    i: usize,
-    n: usize,
-) -> DBMRelation {
+fn try_subset(dbm1: &[RawInequality], dbm2: &[RawInequality], i: usize, n: usize) -> DBMRelation {
     for k in i..n {
         if dbm1[k] > dbm2[k] {
             return DBMRelation::Different;
@@ -61,12 +56,7 @@ fn try_subset(
     DBMRelation::Subset
 }
 
-fn try_superset(
-    dbm1: &Vec<RawInequality>,
-    dbm2: &Vec<RawInequality>,
-    i: usize,
-    n: usize,
-) -> DBMRelation {
+fn try_superset(dbm1: &[RawInequality], dbm2: &[RawInequality], i: usize, n: usize) -> DBMRelation {
     for k in i..n {
         if dbm1[k] < dbm2[k] {
             return DBMRelation::Different;
@@ -87,7 +77,7 @@ pub struct Dirty {
 }
 
 impl Dirty {
-    pub fn clean(dim: usize) -> Self {
+    pub fn new_clean(dim: usize) -> Self {
         Dirty {
             ci: None,
             cj: None,
@@ -95,7 +85,7 @@ impl Dirty {
         }
     }
 
-    pub fn dirty(dim: usize) -> Self {
+    pub fn new_dirty(dim: usize) -> Self {
         Dirty {
             ci: None,
             cj: None,
@@ -179,7 +169,7 @@ impl DBM<Valid> {
             }
         }
 
-        return Equal;
+        Equal
     }
 
     pub fn subset_eq(&self, other: &Self) -> bool {
@@ -198,7 +188,7 @@ impl DBM<Valid> {
         try_superset(&self.data, &other.data, 1, n) == DBMRelation::Superset
     }
 
-    pub fn eq(&self, other: &Self) -> bool {
+    pub fn equals(&self, other: &Self) -> bool {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
 
@@ -284,7 +274,7 @@ impl DBM<Valid> {
         DBM {
             dim,
             data: vec![value.into(); dim * dim],
-            state: Dirty::dirty(dim),
+            state: Dirty::new_dirty(dim),
         }
     }
 
@@ -293,7 +283,7 @@ impl DBM<Valid> {
         DBM {
             dim,
             data: vec![value; dim * dim],
-            state: Dirty::dirty(dim),
+            state: Dirty::new_dirty(dim),
         }
     }
 
@@ -358,7 +348,7 @@ impl DBM<Valid> {
             }
         }
 
-        return true;
+        true
     }
 
     pub fn satisfies(&self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> bool {
@@ -377,7 +367,7 @@ impl DBM<Valid> {
             }
         }
 
-        return true;
+        true
     }
 
     pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
@@ -415,7 +405,7 @@ impl DBM<Valid> {
         DBM {
             dim: self.dim,
             data: self.data,
-            state: Dirty::clean(self.dim),
+            state: Dirty::new_clean(self.dim),
         }
     }
 
@@ -902,7 +892,6 @@ impl IndexMut<(ClockIndex, ClockIndex)> for DBM<Unsafe> {
 
 impl<T: DBMState> Display for DBM<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        //write!(f, "\n")?;
         let mut lines = vec![];
 
         for i in 0..self.dim {
@@ -910,10 +899,8 @@ impl<T: DBMState> Display for DBM<T> {
 
             for j in 0..self.dim {
                 line.push(format!("{}", self[(i, j)]));
-                //write!(f, "{} ", self[(i, j)])?;
             }
             lines.push(line);
-            //write!(f, "]\n")?;
         }
 
         let max_len = lines.iter().flatten().map(|s| s.len()).max().unwrap();
@@ -922,7 +909,7 @@ impl<T: DBMState> Display for DBM<T> {
             for s in line {
                 write!(f, "{:<max_len$}", s)?;
             }
-            write!(f, "]\n")?;
+            writeln!(f, "]")?;
         }
         Ok(())
     }
@@ -931,8 +918,8 @@ impl<T: DBMState> Display for DBM<T> {
 #[allow(unused)]
 mod test {
     use super::DBM;
-    use crate::dbm::DBMRelation;
     use crate::util::bit_conversion::{u32s_to_represent_bits, u32s_to_represent_bytes};
+    use crate::zones::DBMRelation;
 
     #[test]
     fn dbm1() {
@@ -1079,9 +1066,9 @@ mod test {
 
         assert!(zero.subset_eq(&init));
         assert!(init.superset_eq(&zero));
-        assert!(!zero.eq(&init));
-        assert!(zero.eq(&zero));
-        assert!(init.eq(&init));
+        assert!(!zero.equals(&init));
+        assert!(zero.equals(&zero));
+        assert!(init.equals(&init));
         assert_eq!(zero.relation_to(&init), DBMRelation::Subset);
         assert_eq!(init.relation_to(&zero), DBMRelation::Superset);
     }
@@ -1099,9 +1086,9 @@ mod test {
 
         assert!(!zero.subset_eq(&five));
         assert!(!zero.superset_eq(&five));
-        assert!(!zero.eq(&five));
-        assert!(zero.eq(&zero));
-        assert!(five.eq(&five));
+        assert!(!zero.equals(&five));
+        assert!(zero.equals(&zero));
+        assert!(five.equals(&five));
         assert_eq!(zero.relation_to(&five), DBMRelation::Different);
         assert_eq!(five.relation_to(&zero), DBMRelation::Different);
     }

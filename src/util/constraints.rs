@@ -22,23 +22,6 @@ mod bound_strictness {
     pub const WEAK: InnerRawInequality = 1;
 }
 
-/*
-pub struct Constraint {
-    inequality: RawInequality,
-    i: ClockIndex,
-    j: ClockIndex,
-}
-
-impl Constraint {
-    pub fn new(i: ClockIndex, j: ClockIndex, inequality: Inequality) -> Self {
-        Self {
-            inequality: inequality.into(),
-            i,
-            j,
-        }
-    }
-}*/
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Neg, Hash)]
 pub struct RawInequality {
     inner: InnerRawInequality,
@@ -69,8 +52,7 @@ impl RawInequality {
     }
 
     pub const fn is_strict(&self) -> bool {
-        let is_strict = self.inner & 1 == 0;
-        is_strict
+        self.inner & 1 == 0
     }
 
     pub const fn bound(&self) -> Bound {
@@ -223,13 +205,13 @@ impl Debug for RawInequality {
     }
 }
 
-impl Into<Inequality> for RawInequality {
-    fn into(self) -> Inequality {
-        let bound = self.bound();
-        if self.is_strict() {
-            Inequality::LS(bound)
+impl From<RawInequality> for Inequality {
+    fn from(raw: RawInequality) -> Self {
+        let bound = raw.bound();
+        if raw.is_strict() {
+            Self::LS(bound)
         } else {
-            Inequality::LE(bound)
+            Self::LE(bound)
         }
     }
 }

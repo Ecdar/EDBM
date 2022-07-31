@@ -5,13 +5,19 @@ use crate::{
     util::constraints::ClockIndex,
 };
 
-use super::{minimal_graph::get_dbm_bit_matrix, util::dbm_list_union, DBMRelation, Valid, DBM};
+use super::{
+    minimal_graph::get_dbm_bit_matrix,
+    util::{dbm_list_reduce, dbm_list_union},
+    DBMRelation, Valid, DBM,
+};
 
+/// Shared Federations are immutable but can share memory of internal DBMs using an allocator
 #[derive(Clone)]
 pub struct SharedFederation {
     dbms: Vec<DBMPtr>,
 }
 
+/// Owned Federations are mutable. They own the internal DBMs allowing for efficient (lockless) internal mutability.
 #[derive(Clone)]
 pub struct OwnedFederation {
     dbms: Vec<DBM<Valid>>,
@@ -40,8 +46,8 @@ impl OwnedFederation {
         self.dbms.first().unwrap()
     }
 
-    pub fn from_dbms(dbms: Vec<DBM<Valid>>) -> Option<Self> {
-        Some(OwnedFederation { dbms })
+    pub fn from_dbms(dbms: Vec<DBM<Valid>>) -> Self {
+        OwnedFederation { dbms }
     }
 
     pub fn init(dim: ClockIndex) -> Self {
@@ -53,7 +59,7 @@ impl OwnedFederation {
     }
 
     pub fn inverse(&self, dim: ClockIndex) -> Self {
-        Self::init(dim).subtract(&self)
+        Self::init(dim).subtract(self)
     }
 
     pub fn zero(dim: ClockIndex) -> Self {
@@ -62,6 +68,48 @@ impl OwnedFederation {
         OwnedFederation {
             dbms: vec![DBM::zero(dim)],
         }
+    }
+
+    pub fn reduce(self) -> Self {
+        OwnedFederation {
+            dbms: dbm_list_reduce(self.dbms),
+        }
+    }
+
+    pub fn expensive_reduce(mut self) -> Self {
+        if self.size() < 2 {
+            return self;
+        }
+
+        let mut i = 0;
+
+        while i < self.dbms.len() {
+            // Take out a dbm and check whether it is a subset of the remainder
+            let dbm = self.dbms.swap_remove(i);
+
+            // self <= dbm
+            if self.subset_eq_dbm(&dbm) {
+                // this dbm contains the entire remainder,
+                // so the federation can be replaced by it alone
+                return Self { dbms: vec![dbm] };
+            } else {
+                let mut dbm_fed = Self::from_dbms(vec![dbm]);
+                // dbm <= self
+                if self.superset_eq(&dbm_fed) {
+                    // this remainder contains the dbm,
+                    // so the dbm can be dropped from the federation
+                    drop(dbm_fed);
+                } else {
+                    // The dbm is incomparable to the remainder
+                    // Put it back
+                    // We know there is only one DBM so we can move it
+                    self.dbms.insert(0, dbm_fed.dbms.pop().unwrap());
+                    i += 1;
+                }
+            }
+        }
+
+        self
     }
 
     fn subtract_dbm(self, other: &DBM<Valid>) -> Self {
@@ -80,7 +128,7 @@ impl OwnedFederation {
                     // That means we remove everything.
                     return OwnedFederation::EMPTY;
                 }
-                let partial = dbm.internal_subtract_dbm(other, &mingraph);
+                let partial = dbm.internal_subtract_dbm(other, mingraph);
                 result = dbm_list_union(result, partial);
             } else {
                 result.push(dbm);
@@ -90,12 +138,12 @@ impl OwnedFederation {
         Self { dbms: result }
     }
 
-    pub fn add_dbm(mut self, dbm: &DBM<Valid>) -> Self {
+    pub fn append_dbm(mut self, dbm: &DBM<Valid>) -> Self {
         self.dbms.push(dbm.clone());
         self
     }
 
-    pub fn add(mut self, other: &Self) -> Self {
+    pub fn append(mut self, other: &Self) -> Self {
         self.dbms.append(&mut other.dbms.clone());
         self
     }
@@ -127,11 +175,11 @@ impl OwnedFederation {
         }
 
         if self.subset_eq_dbm(other.first_dbm()) {
-            return true; // If all DBMs are subset_eq, the subtraction is empty
+            true // If all DBMs are subset_eq, the subtraction is empty
         } else if other.size() == 1 {
-            return false; // If it is the only DBM we know the result (!subset_eq)
+            false // If it is the only DBM we know the result (!subset_eq)
         } else {
-            return self.clone().subtract(other).is_empty();
+            self.clone().subtract(other).is_empty()
         }
     }
 
@@ -157,7 +205,7 @@ impl OwnedFederation {
         true
     }
 
-    pub fn eq(&self, other: &Self) -> bool {
+    pub fn equals(&self, other: &Self) -> bool {
         self.relation(other) == DBMRelation::Equal
     }
 
@@ -182,14 +230,6 @@ impl OwnedFederation {
     }
 }
 
-impl SharedFederation {
-    pub fn to_owned(self) -> OwnedFederation {
-        OwnedFederation {
-            dbms: self.dbms.into_iter().map(|ptr| ptr.take_dbm()).collect(),
-        }
-    }
-}
-
 impl Display for OwnedFederation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Federation{{")?;
@@ -198,9 +238,9 @@ impl Display for OwnedFederation {
                 f,
                 "{}",
                 format!("  DBM {}:\n{}", i + 1, dbm)
-                    .strip_suffix("\n")
+                    .strip_suffix('\n')
                     .unwrap()
-                    .replace("\n", "\n    ")
+                    .replace('\n', "\n    ")
             )?;
         }
 
@@ -208,11 +248,19 @@ impl Display for OwnedFederation {
     }
 }
 
+impl SharedFederation {
+    pub fn to_owned(self) -> OwnedFederation {
+        OwnedFederation {
+            dbms: self.dbms.into_iter().map(|ptr| ptr.take_dbm()).collect(),
+        }
+    }
+}
+
 #[allow(unused)]
 mod test {
     use crate::{
-        dbm::{DBMRelation, DBM},
         util::constraints::Inequality,
+        zones::{DBMRelation, DBM},
     };
 
     use super::OwnedFederation;
@@ -223,7 +271,7 @@ mod test {
         let init = DBM::init(5);
         let dbm1 = init.clone().constrain_and_close(1, 0, LE(5)).unwrap();
         let dbm2 = init.clone().constrain_and_close(0, 1, LE(-5)).unwrap();
-        let fed = OwnedFederation::from_dbms(vec![dbm1, dbm2]).unwrap();
+        let fed = OwnedFederation::from_dbms(vec![dbm1, dbm2]);
 
         assert!(fed.subset_eq_dbm(&init));
         assert!(fed.subset_eq_dbm(&init));
@@ -234,7 +282,7 @@ mod test {
         use Inequality::*;
         let init = DBM::init(5);
         let dbm1 = init.clone().constrain_and_close(1, 0, LE(5)).unwrap();
-        let fed = OwnedFederation::from_dbms(vec![dbm1.clone(), dbm1]).unwrap();
+        let fed = OwnedFederation::from_dbms(vec![dbm1.clone(), dbm1]);
 
         assert!(fed.subset_eq_dbm(&init));
     }
@@ -266,14 +314,14 @@ mod test {
 
         let fed1 = OwnedFederation::init(4);
 
-        assert!(fed1.eq(&fed1));
+        assert!(fed1.equals(&fed1));
 
         let dbm = DBM::init(4)
             .constrain_and_close(1, 0, LE(5))
             .unwrap()
             .constrain_and_close(0, 1, LE(-5))
             .unwrap();
-        let fed2 = OwnedFederation::from_dbms(vec![dbm]).unwrap();
+        let fed2 = OwnedFederation::from_dbms(vec![dbm]);
 
         let res = fed1.clone().subtract(&fed2);
 
@@ -282,7 +330,21 @@ mod test {
         println!("res1: {res}");
         println!("res2: {res2}");
 
-        assert!(res.eq(&res));
-        assert!(res2.eq(&res2));
+        assert!(res.equals(&res));
+        assert!(res2.equals(&res2));
+
+        let kinda_init = res.append(&res2);
+
+        assert!(kinda_init.equals(&fed1));
+
+        let before_reduce = kinda_init.append(&fed1);
+        println!("Before: {before_reduce}");
+
+        let after_reduce = before_reduce.expensive_reduce();
+        println!("After: {after_reduce}");
+
+        assert_eq!(after_reduce.size(), 1);
+
+        assert!(after_reduce.equals(&fed1));
     }
 }

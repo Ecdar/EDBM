@@ -1,9 +1,9 @@
 use std::{
-    collections::{HashMap},
+    collections::HashMap,
     sync::{Arc, RwLock, Weak},
 };
 
-use crate::dbm::{Valid, DBM};
+use crate::zones::{Valid, DBM};
 
 type HashType = u64;
 
@@ -79,7 +79,8 @@ impl DBMAllocator for SharedDBMAllocator {
             .write()
             .expect("RwLock Poisoned")
             .insert(hash, Arc::downgrade(&arc));
-        return DBMPtr::from_arc(arc);
+
+        DBMPtr::from_arc(arc)
     }
 }
 
@@ -122,7 +123,8 @@ impl DBMAllocator for BucketDBMAllocator {
         dbms.write()
             .expect("RwLock Poisoned")
             .insert(hash, Arc::downgrade(&arc));
-        return DBMPtr::from_arc(arc);
+
+        DBMPtr::from_arc(arc)
     }
 }
 
@@ -148,8 +150,8 @@ mod test {
     use std::{sync::Arc, thread, time::Duration};
 
     use crate::{
-        dbm::DBM,
         memory::allocator::{BaseDBMAllocator, BucketDBMAllocator, SharedDBMAllocator},
+        zones::DBM,
     };
 
     use super::DBMAllocator;
