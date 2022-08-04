@@ -9,5 +9,9 @@ edition = "2021"
 name = "edbm"
 path = "src/lib.rs"
 
+[[bin]]
+name = "mybin"
+path = "src/bin.rs"
+
 [dependencies]
 derive_more = "0.99.17"

@@ -28,6 +28,9 @@ impl DBMPtr {
         Arc::weak_count(&self.arc)
     }
 
+    pub fn clone_dbm(&self) -> DBM<Valid> {
+        self.arc.as_ref().clone()
+    }
     /// If the ptr is the only reference to the underlying DBM move it out, otherwise return a clone of it
     ///
     /// Necessary to call methods on the underlying DBM

@@ -223,7 +223,7 @@ impl OwnedFederation {
         }
     }
 
-    pub fn to_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
+    pub fn into_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
         SharedFederation {
             dbms: self.dbms.into_iter().map(|dbm| alloc.to_ptr(dbm)).collect(),
         }
@@ -249,9 +249,15 @@ impl Display for OwnedFederation {
 }
 
 impl SharedFederation {
-    pub fn to_owned(self) -> OwnedFederation {
+    pub fn into_owned(self) -> OwnedFederation {
         OwnedFederation {
             dbms: self.dbms.into_iter().map(|ptr| ptr.take_dbm()).collect(),
+        }
+    }
+
+    pub fn owned_clone(&self) -> OwnedFederation {
+        OwnedFederation {
+            dbms: self.dbms.iter().map(|ptr| ptr.clone_dbm()).collect(),
         }
     }
 }
