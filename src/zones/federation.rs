@@ -676,105 +676,552 @@ impl SharedFederation {
     pub fn into_owned(self) -> OwnedFederation {
         OwnedFederation {
             dbms: self.dbms.into_iter().map(|ptr| ptr.take_dbm()).collect(),
+            dim: self.dim,
         }
     }
 
     pub fn owned_clone(&self) -> OwnedFederation {
         OwnedFederation {
             dbms: self.dbms.iter().map(|ptr| ptr.clone_dbm()).collect(),
+            dim: self.dim,
         }
     }
 }
 
 #[allow(unused)]
 mod test {
+    use rand::Rng;
+
     use crate::{
-        util::constraints::Inequality,
-        zones::{DBMRelation, DBM},
+        util::{bounds::Bounds, constraints::Inequality},
+        zones::{
+            rand_gen::{random_dbm_in_fed, random_dbm_subset, random_fed, random_fed_arg},
+            DBMRelation, DBM,
+        },
     };
 
     use super::OwnedFederation;
 
-    #[test]
-    fn test_relation1() {
-        use Inequality::*;
-        let init = DBM::init(5);
-        let dbm1 = init.clone().constrain_and_close(1, 0, LE(5)).unwrap();
-        let dbm2 = init.clone().constrain_and_close(0, 1, LE(-5)).unwrap();
-        let fed = OwnedFederation::from_dbms(vec![dbm1, dbm2]);
+    const TEST_ATTEMPTS: usize = 250;
+    const TEST_SIZE: usize = 10;
+    const DIMS: &[usize] = &[1, 2, 5];
 
-        assert!(fed.subset_eq_dbm(&init));
-        assert!(fed.subset_eq_dbm(&init));
+    #[test]
+    fn rand_equals_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
+
+                    assert!(fed.equals(&fed));
+                }
+            }
+        }
     }
 
     #[test]
-    fn test_relation2() {
-        use Inequality::*;
-        let init = DBM::init(5);
-        let dbm1 = init.clone().constrain_and_close(1, 0, LE(5)).unwrap();
-        let fed = OwnedFederation::from_dbms(vec![dbm1.clone(), dbm1]);
+    fn rand_reduce_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
 
-        assert!(fed.subset_eq_dbm(&init));
+                    let reduced = fed.clone().reduce();
+
+                    assert!(fed.equals(&reduced));
+                }
+            }
+        }
     }
 
     #[test]
-    fn subtract_test() {
-        use Inequality::*;
+    fn rand_expensive_reduce_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
 
-        let fed = OwnedFederation::init(4);
-        let dbm = DBM::init(4)
-            .constrain_and_close(1, 0, LE(5))
-            .unwrap()
-            .constrain_and_close(0, 1, LE(-5))
-            .unwrap();
+                    let reduced = fed.clone().expensive_reduce();
 
-        let res = fed.clone().subtract_dbm(&dbm);
+                    assert!(fed.equals(&reduced));
+                }
+            }
+        }
+    }
 
-        println!("{fed}");
-        println!("minus");
-        println!("{dbm}");
-        println!("=");
-        println!("{res}");
+    #[test]
+    fn rand_merge_reduce_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
 
-        //assert!(false);
+                    let reduced = fed.clone().merge_reduce(0);
+
+                    assert!(fed.equals(&reduced));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rand_merge_expensive_reduce_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
+
+                    let reduced = fed.clone().merge_expensive_reduce(0);
+
+                    assert!(fed.equals(&reduced));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rand_inverse_subtract_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed = random_fed(dim, size);
+
+                    let inverse = fed.clone().inverse();
+                    let fed2 = fed.clone().subtract(&inverse);
+
+                    assert!(fed.equals(&fed2));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_intersection() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = random_fed_arg(&fed1, size);
+
+                    let fed3 = fed1.clone().intersection(&fed2);
+                    let dbm2_opt = fed2.get_dbm(0);
+
+                    let fed4 = if let Some(dbm2) = &dbm2_opt {
+                        fed1.clone().dbm_intersection(dbm2)
+                    } else {
+                        OwnedFederation::empty(dim)
+                    };
+                    let fed12 = fed1.clone().intersection(&fed2);
+                    let fed21 = fed2.clone().intersection(&fed1);
+                    assert!(fed12.equals(&fed21));
+                    assert!(fed3.subset_eq(&fed1) && fed3.subset_eq(&fed2));
+                    assert!(fed4.subset_eq(&fed1));
+                    if let Some(dbm2) = &dbm2_opt {
+                        assert!(fed4.subset_eq_dbm(dbm2));
+                    }
+                    for dbm3 in &fed3.dbms {
+                        assert!(fed1.superset_eq_dbm(dbm3));
+                        assert!(fed2.superset_eq_dbm(dbm3));
+                    }
+
+                    for dbm4 in &fed4.dbms {
+                        assert!(fed1.superset_eq_dbm(dbm4));
+                        if let Some(dbm2) = &dbm2_opt {
+                            assert!(dbm2.superset_eq(dbm4));
+                        }
+                    }
+
+                    // UDBM also checks for point inclusion here...
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_union() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = random_fed(dim, size);
+                    let mut fed3 = fed1.clone();
+
+                    let fed1 = fed1.union(&fed2);
+                    let u_fed1 = fed1.clone().union(&fed2);
+
+                    assert_eq!(fed1.size(), u_fed1.size());
+                    assert!(fed1.equals(&u_fed1));
+
+                    assert!(fed2.subset_eq(&fed1) && fed1.superset_eq(&fed2));
+
+                    for dbm2 in &fed2.dbms {
+                        assert!(fed1.superset_eq_dbm(dbm2));
+                        fed3 = fed3.union(&OwnedFederation::from_dbm(dbm2.clone()));
+                    }
+
+                    assert!(fed1.equals(&fed3) && fed1.superset_eq(&fed3) && fed1.subset_eq(&fed3));
+                    let fed1 = fed1.set_empty();
+                    let fed1 = fed1.union(&fed2);
+                    assert!(
+                        fed1.equals(&fed2)
+                            && fed1.superset_eq(&fed2)
+                            && fed1.subset_eq(&fed2)
+                            && fed2.equals(&fed1)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_up() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let fed1 = fed1.up();
+                    assert!(fed2.subset_eq(&fed1));
+                    assert!(size == 0 || fed1.is_unbounded());
+
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.up());
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
     }
     #[test]
-    fn subtract_fed_test() {
-        use Inequality::*;
+    fn test_down() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let fed1 = fed1.down();
+                    assert!(fed2.subset_eq(&fed1));
 
-        let fed1 = OwnedFederation::init(4);
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.down());
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
 
-        assert!(fed1.equals(&fed1));
+    #[test]
+    fn test_free_clock() {
+        let mut rng = rand::thread_rng();
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    if dim == 1 {
+                        continue;
+                    }
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let c = rng.gen_range(1..dim);
+                    let fed1 = fed1.free_clock(c);
+                    assert!(fed2.subset_eq(&fed1));
 
-        let dbm = DBM::init(4)
-            .constrain_and_close(1, 0, LE(5))
-            .unwrap()
-            .constrain_and_close(0, 1, LE(-5))
-            .unwrap();
-        let fed2 = OwnedFederation::from_dbms(vec![dbm]);
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.free_clock(c));
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
 
-        let res = fed1.clone().subtract(&fed2);
+    #[test]
+    fn test_update_clock_val() {
+        let mut rng = rand::thread_rng();
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    if dim == 1 {
+                        continue;
+                    }
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let c = rng.gen_range(1..dim);
+                    let v = rng.gen_range(0..100);
+                    let fed1 = fed1.update_clock_val(c, v);
 
-        let res2 = fed1.clone().subtract(&res);
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.update_clock_val(c, v));
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
 
-        println!("res1: {res}");
-        println!("res2: {res2}");
+    #[test]
+    fn test_update_clock_clock() {
+        let mut rng = rand::thread_rng();
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    if dim == 1 {
+                        continue;
+                    }
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let c1 = rng.gen_range(1..dim);
+                    let c2 = rng.gen_range(1..dim);
+                    let fed1 = fed1.update_clock_clock(c1, c2);
 
-        assert!(res.equals(&res));
-        assert!(res2.equals(&res2));
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.update_clock_clock(c1, c2));
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
 
-        let kinda_init = res.append(&res2);
+    #[test]
+    fn test_update_increment() {
+        let mut rng = rand::thread_rng();
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    if dim == 1 {
+                        continue;
+                    }
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let c1 = rng.gen_range(1..dim);
+                    let v = rng.gen_range(0..50);
 
-        assert!(kinda_init.equals(&fed1));
+                    let fed1 = fed1.update_increment(c1, v);
 
-        let before_reduce = kinda_init.append(&fed1);
-        println!("Before: {before_reduce}");
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.update_increment(c1, v));
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
 
-        let after_reduce = before_reduce.expensive_reduce();
-        println!("After: {after_reduce}");
+    #[test]
+    fn test_update() {
+        let mut rng = rand::thread_rng();
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 0..TEST_SIZE {
+                    if dim == 1 {
+                        continue;
+                    }
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = fed1.clone();
+                    let c1 = rng.gen_range(1..dim);
+                    let c2 = rng.gen_range(1..dim);
 
-        assert_eq!(after_reduce.size(), 1);
+                    let v = rng.gen_range(0..100);
 
-        assert!(after_reduce.equals(&fed1));
+                    let fed1 = fed1.update(c1, c2, v);
+
+                    let mut dbms = vec![];
+                    for dbm2 in fed2.dbms {
+                        dbms.push(dbm2.update(c1, c2, v));
+                    }
+                    let fed2 = OwnedFederation::from_dbms(dim, dbms);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed1 = fed1.reduce();
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    let fed2 = fed2.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
+                    assert!(
+                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_relation() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let fed = random_fed(dim, size);
+                    let fed = fed.reduce();
+
+                    let (dbm, strict) = random_dbm_subset(random_dbm_in_fed(&fed));
+                    assert!(fed.superset_eq_dbm(&dbm));
+                    if strict {
+                        let fed2 = OwnedFederation::from_dbm(dbm.clone());
+                        assert!(fed.relation(&fed2) == DBMRelation::Superset);
+                        assert!(fed2.relation(&fed) == DBMRelation::Subset);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_subtract() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let fed2 = random_fed_arg(&fed1, size);
+                    let mut fed3 = fed1.clone();
+                    let fed4 = fed1.clone().intersection(&fed2);
+                    // assert(fed4.le(fed1) && fed4.le(fed2));
+                    assert!(fed4.subset_eq(&fed1) && fed4.subset_eq(&fed2));
+                    assert!(fed4.clone().subtract(&fed1).is_empty());
+                    assert!(fed4.clone().subtract(&fed2).is_empty());
+                    let s12 = fed1.clone().subtract(&fed2);
+                    let s14 = fed1.clone().subtract(&fed4);
+                    assert!(s12.equals(&s14));
+                    let s21 = fed2.clone().subtract(&fed1);
+                    let s24 = fed2.clone().subtract(&fed4);
+                    assert!(s21.equals(&s24));
+                    let u1 = fed1.clone().union(&fed2);
+                    let u2 = s12.clone().union(&s21).union(&fed4);
+                    assert!(u1.equals(&u2));
+                    drop(s12);
+                    drop(s14);
+                    drop(s21);
+                    drop(s24);
+                    drop(u1);
+                    drop(u2);
+
+                    let fed1 = fed1.subtract(&fed2);
+
+                    for dbm in &fed2.dbms {
+                        fed3 = fed3.subtract_dbm(dbm);
+                    }
+
+                    assert!(fed1.equals(&fed3));
+                    fed3 = fed3.merge_expensive_reduce(0);
+                    assert!(fed1.equals(&fed3));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_predt() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let good = random_fed(dim, size);
+                    let bad = random_fed_arg(&good, size);
+                    let p = good.predt(&bad);
+                    assert!(p.clone().intersection(&bad).is_empty());
+                    assert!(good.subset_eq(&bad) || !(p.clone().intersection(&good)).is_empty());
+                    let good_down = good.down();
+                    assert!(p.subset_eq(&good_down.clone().subtract(&bad)));
+                    assert!(!bad.is_empty() || p.equals(&good_down));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_extrapolate() {
+        let mut rng = rand::thread_rng();
+
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    println!("dim: {}, size: {}", dim, size);
+                    let mut bounds = Bounds::new(dim);
+                    for i in 1..dim {
+                        let low = rng.gen_range(-500..500);
+                        let up = rng.gen_range(-500..500);
+                        if low >= 0 {
+                            bounds.add_lower(i, low);
+                        }
+                        if up >= 0 {
+                            bounds.add_upper(i, up);
+                        }
+                    }
+
+                    // Set lower and upper to max of upper and lower
+                    let max_bounds = bounds.clone().set_to_maxes();
+
+                    let fed1 = random_fed(dim, size);
+
+                    let fed2 = fed1.clone().extrapolate_max_bounds(&bounds);
+                    let fed3 = fed1.clone().extrapolate_lu_bounds(&max_bounds);
+                    let fed4 = fed1.clone().extrapolate_lu_bounds(&bounds);
+
+                    /// 1 <= 2 == 3 <= 4
+                    assert!(fed1.subset_eq(&fed2));
+                    assert!(fed2.equals(&fed3));
+                    assert_eq!(fed2.relation(&fed3), DBMRelation::Equal);
+
+                    assert!(
+                        fed3.subset_eq(&fed4),
+                        "max_extrap: \n{}, \nlu_extrap: \n{},\n{:?}",
+                        fed2,
+                        fed4,
+                        bounds
+                    );
+                }
+            }
+        }
     }
 }
