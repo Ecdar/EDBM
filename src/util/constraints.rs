@@ -7,14 +7,16 @@ use self::{
     bound_constants::INFINITY,
     bound_strictness::*,
     inner_raw_constants::{INNER_LE_OVERFLOW, INNER_LE_ZERO, INNER_LS_INFINITY},
+    raw_constants::{LE_ZERO, LS_INFINITY},
 };
 
-use derive_more::{Add, Neg, Sub};
+use derive_more::{Add, AddAssign, BitAnd, Neg, Sub, SubAssign};
 
 pub type ClockIndex = usize;
 pub type Bound = i32;
 pub(crate) type InnerRawInequality = i32;
 
+// Based on the UDBM implementation
 mod bound_strictness {
     use super::InnerRawInequality;
 
@@ -22,7 +24,9 @@ mod bound_strictness {
     pub const WEAK: InnerRawInequality = 1;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Neg, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Add, Sub, Neg, Hash, AddAssign, SubAssign, BitAnd,
+)]
 pub struct RawInequality {
     inner: InnerRawInequality,
 }
@@ -32,6 +36,7 @@ pub enum Strictness {
     Weak,
 }
 
+// Based on the UDBM implementation of raw_t and helper functions
 impl RawInequality {
     pub const MAX: Self = Self {
         inner: InnerRawInequality::MAX,
@@ -74,6 +79,22 @@ impl RawInequality {
         }
     }
 
+    pub fn raw_inc(self, rhs: Self) -> Self {
+        if self < LS_INFINITY {
+            self + rhs
+        } else {
+            LS_INFINITY
+        }
+    }
+
+    pub fn raw_dec(self, rhs: Self) -> Self {
+        if self < LS_INFINITY {
+            self - rhs
+        } else {
+            self
+        }
+    }
+
     pub fn add_raw(self, rhs: Self) -> Self {
         let x = self.inner;
         let y = rhs.inner;
@@ -89,8 +110,6 @@ impl RawInequality {
     }
 
     pub fn as_strict(&self) -> Self {
-        // TODO: maybe we need this check, UPPAAL does not do it
-        // assert!(!self.is_zero());
         Self {
             inner: self.inner & !WEAK,
         }
@@ -173,24 +192,12 @@ impl RawInequality {
         inner == INNER_LS_INFINITY || (inner < INNER_LE_OVERFLOW && -inner < INNER_LE_OVERFLOW)
     }
 }
-/*
-impl Add for RawInequality {
-    type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        let x = self.inner;
-        let y = rhs.inner;
-        assert!(x <= INNER_LS_INFINITY);
-        assert!(y <= INNER_LS_INFINITY);
-        assert!(self.is_valid());
-        assert!(rhs.is_valid());
-        if x == INNER_LS_INFINITY || y == INNER_LS_INFINITY {
-            INNER_LS_INFINITY.into()
-        } else {
-            ((x + y) - ((x | y) & 1)).into()
-        }
-    }
-}*/
+/// Returns true if no intersection for sure with weak constraints
+// Based on the UDBM implementation
+pub fn check_weak_add(cij: RawInequality, cji: RawInequality) -> bool {
+    cij != LS_INFINITY && cji != LS_INFINITY && (cij + cji - (cij & cji & 1.into())) < LE_ZERO
+}
 
 impl Display for RawInequality {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -225,6 +232,12 @@ impl From<Inequality> for RawInequality {
 impl From<InnerRawInequality> for RawInequality {
     fn from(inner: InnerRawInequality) -> Self {
         Self { inner }
+    }
+}
+
+impl From<RawInequality> for InnerRawInequality {
+    fn from(inner: RawInequality) -> Self {
+        inner.inner
     }
 }
 
