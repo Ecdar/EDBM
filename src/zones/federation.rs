@@ -2,32 +2,278 @@ use std::fmt::Display;
 
 use crate::{
     memory::allocator::{DBMAllocator, DBMPtr},
-    util::constraints::ClockIndex,
+    util::{
+        bounds::Bounds,
+        constraints::{check_weak_add, Bound, ClockIndex, Inequality, RawInequality},
+    },
 };
 
 use super::{
     minimal_graph::get_dbm_bit_matrix,
     util::{dbm_list_reduce, dbm_list_union},
-    DBMRelation, Valid, DBM,
+    DBMRelation, Dirty, Valid, DBM,
 };
 
 /// Shared Federations are immutable but can share memory of internal DBMs using an allocator
 #[derive(Clone)]
 pub struct SharedFederation {
+    pub dim: ClockIndex,
     dbms: Vec<DBMPtr>,
 }
 
 /// Owned Federations are mutable. They own the internal DBMs allowing for efficient (lockless) internal mutability.
 #[derive(Clone)]
 pub struct OwnedFederation {
+    pub dim: ClockIndex,
     dbms: Vec<DBM<Valid>>,
 }
 
 impl OwnedFederation {
-    const EMPTY: Self = OwnedFederation { dbms: vec![] };
-
+    pub fn empty(dim: ClockIndex) -> OwnedFederation {
+        OwnedFederation { dim, dbms: vec![] }
+    }
     pub fn is_empty(&self) -> bool {
         self.dbms.is_empty()
+    }
+
+    pub fn is_unbounded(&self) -> bool {
+        for dbm in &self.dbms {
+            if dbm.is_unbounded() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Constrains the federation DBMs with `dbm[i,j]=constraint`.
+    pub fn constrain_raw(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
+        self.filter_map_all(|dbm| dbm.constrain_and_close_raw(i, j, constraint))
+    }
+
+    /// Constrains the federation DBMs with `dbm[i,j]=constraint`.
+    pub fn constrain(self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> Self {
+        self.filter_map_all(|dbm| dbm.constrain_and_close(i, j, constraint))
+    }
+
+    /// Constrains the federation DBMs such that `bound<=clock<=bound` e.g. `clock=bound`.
+    pub fn constrain_eq(self, clock: ClockIndex, bound: Bound) -> Self {
+        use Inequality::*;
+        self.constrain(clock, 0, LE(bound)) // Lower bound
+            .constrain(0, clock, LE(-bound)) // Upper bound
+    }
+
+    /// Efficient method to apply multiple constraints at once, because the DBMs are only closed once at the end.
+    pub fn constrain_raw_many(
+        self,
+        constraints: Vec<(ClockIndex, ClockIndex, RawInequality)>,
+    ) -> Self {
+        self.filter_map_all_dirty(|dbm| {
+            let mut res = Some(dbm);
+            for (i, j, constraint) in &constraints {
+                res = res?.constrain_raw(*i, *j, *constraint);
+            }
+
+            res
+        })
+    }
+
+    /// Efficient method to apply multiple constraints at once, because the DBMs are only closed once at the end.
+    pub fn constrain_many(self, constraints: Vec<(ClockIndex, ClockIndex, Inequality)>) -> Self {
+        self.filter_map_all_dirty(|dbm| {
+            let mut res = Some(dbm);
+            for (i, j, constraint) in &constraints {
+                res = res?.constrain(*i, *j, *constraint)
+            }
+
+            res
+        })
+    }
+
+    pub fn tighten(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
+        self.map_all(|dbm| dbm.tighten(i, j, constraint))
+    }
+
+    pub fn up(self) -> Self {
+        self.map_all(|dbm| dbm.up())
+    }
+
+    pub fn down(self) -> Self {
+        self.map_all(|dbm| dbm.down())
+    }
+
+    pub fn satisfies(&self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> bool {
+        self.dbms.iter().any(|dbm| dbm.satisfies(i, j, constraint))
+    }
+
+    pub fn satisfies_raw(&self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> bool {
+        self.dbms
+            .iter()
+            .any(|dbm| dbm.satisfies_raw(i, j, constraint))
+    }
+
+    pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
+        self.map_all(|dbm| dbm.update_clock_val(clock, val))
+    }
+
+    pub fn update_clock_clock(self, clock_i: ClockIndex, clock_j: ClockIndex) -> Self {
+        self.map_all(|dbm| dbm.update_clock_clock(clock_i, clock_j))
+    }
+
+    pub fn update(self, i: ClockIndex, j: ClockIndex, val: Bound) -> Self {
+        self.map_all(|dbm| dbm.update(i, j, val))
+    }
+
+    pub fn update_increment(self, clock: ClockIndex, inc: Bound) -> Self {
+        self.map_all(|dbm| dbm.update_increment(clock, inc))
+    }
+
+    pub fn free_clock(self, clock: ClockIndex) -> Self {
+        self.map_all(|dbm| dbm.free_clock(clock))
+    }
+
+    pub fn extrapolate_max_bounds(self, bounds: &Bounds) -> Self {
+        self.map_all(|dbm| dbm.extrapolate_max_bounds(bounds))
+    }
+
+    pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
+        self.map_all(|dbm| dbm.extrapolate_lu_bounds(bounds))
+    }
+
+    pub fn set_empty(mut self) -> Self {
+        self.dbms.clear();
+        self
+    }
+
+    pub fn dbm_intersection(mut self, dbm2: &DBM<Valid>) -> Self {
+        let mut res = vec![];
+        for dbm1 in self.dbms {
+            if let Some(intersection) = dbm1.intersection(dbm2) {
+                res.push(intersection);
+            }
+        }
+
+        self.dbms = res;
+        self
+    }
+
+    pub fn intersection(self, other: &Self) -> Self {
+        assert_eq!(self.dim, other.dim);
+        if self.is_empty() || other.is_empty() {
+            return self.set_empty();
+        }
+
+        let dim = self.dim;
+        let s1 = self.size();
+        let s2 = other.size();
+
+        let mut res = Vec::with_capacity(s1 * s2);
+        let mut skips = res.len();
+        for dbm2 in &other.dbms[1..s2] {
+            res.extend(self.clone().dbm_intersection(dbm2).merge_reduce(skips).dbms);
+            skips = res.len();
+        }
+
+        // Avoid final clone
+        res.extend(
+            self.dbm_intersection(&other.dbms[0])
+                .merge_reduce(skips)
+                .dbms,
+        );
+
+        Self { dim, dbms: res }
+    }
+
+    fn steal(mut self, fed: Self) -> Self {
+        let size = self.size();
+        self.dbms.extend(fed.dbms);
+        self.merge_reduce(size)
+    }
+
+    pub fn predt(&self, bads: &Self) -> Self {
+        let goods = self;
+        if bads.is_empty() {
+            return goods.clone().down();
+        }
+
+        if goods.is_empty() {
+            return goods.clone();
+        }
+
+        let dim = goods.dim;
+
+        let mut result = Self::empty(dim);
+        for good in &goods.dbms {
+            let down_good = good.clone().down();
+
+            let bad = &bads.dbms[0]; // We know it is non-empty
+
+            let mut intersect_predt = Self::from_dbm(down_good.clone());
+
+            if down_good.intersects(bad) {
+                let down_bad = Self::from_dbm(bad.clone().down());
+                intersect_predt = intersect_predt
+                    .subtract(&down_bad)
+                    .steal(down_bad.dbm_intersection(good).subtract_dbm(bad).down());
+            }
+
+            // Intersection with other predt
+            for bad in &bads.dbms[1..] {
+                if down_good.intersects(bad) {
+                    let down_bad = Self::from_dbm(bad.clone().down());
+
+                    let part = Self::from_dbm(down_good.clone())
+                        .subtract(&down_bad)
+                        .steal(down_bad.dbm_intersection(good).subtract_dbm(bad).down());
+
+                    intersect_predt = intersect_predt.intersection(&part);
+                    if intersect_predt.is_empty() {
+                        break;
+                    }
+                }
+            }
+
+            // Union of partial predt
+            result = result.steal(intersect_predt);
+        }
+
+        result
+    }
+
+    fn filter_map_all<F>(self, f: F) -> Self
+    where
+        F: Fn(DBM<Valid>) -> Option<DBM<Valid>>,
+    {
+        Self {
+            dbms: self.dbms.into_iter().filter_map(f).collect(),
+            dim: self.dim,
+        }
+    }
+
+    fn filter_map_all_dirty<F>(self, f: F) -> Self
+    where
+        F: Fn(DBM<Dirty>) -> Option<DBM<Dirty>>,
+    {
+        Self {
+            dbms: self
+                .dbms
+                .into_iter()
+                .map(|dbm| dbm.make_dirty())
+                .filter_map(f)
+                .filter_map(|dbm| dbm.close())
+                .collect(),
+            dim: self.dim,
+        }
+    }
+
+    fn map_all<F>(self, f: F) -> Self
+    where
+        F: Fn(DBM<Valid>) -> DBM<Valid>,
+    {
+        Self {
+            dbms: self.dbms.into_iter().map(f).collect(),
+            dim: self.dim,
+        }
     }
 
     pub fn size(&self) -> usize {
@@ -46,8 +292,25 @@ impl OwnedFederation {
         self.dbms.first().unwrap()
     }
 
-    pub fn from_dbms(dbms: Vec<DBM<Valid>>) -> Self {
-        OwnedFederation { dbms }
+    pub fn from_dbm(dbm: DBM<Valid>) -> Self {
+        let dim = dbm.dim;
+        OwnedFederation {
+            dbms: vec![dbm],
+            dim,
+        }
+    }
+
+    pub fn from_dbms(dim: ClockIndex, dbms: Vec<DBM<Valid>>) -> Self {
+        OwnedFederation { dbms, dim }
+    }
+
+    pub fn universe(dim: ClockIndex) -> Self {
+        assert!(dim > 0);
+
+        OwnedFederation {
+            dbms: vec![DBM::universe(dim)],
+            dim,
+        }
     }
 
     pub fn init(dim: ClockIndex) -> Self {
@@ -55,11 +318,8 @@ impl OwnedFederation {
 
         OwnedFederation {
             dbms: vec![DBM::init(dim)],
+            dim,
         }
-    }
-
-    pub fn inverse(&self, dim: ClockIndex) -> Self {
-        Self::init(dim).subtract(self)
     }
 
     pub fn zero(dim: ClockIndex) -> Self {
@@ -67,12 +327,14 @@ impl OwnedFederation {
 
         OwnedFederation {
             dbms: vec![DBM::zero(dim)],
+            dim,
         }
     }
 
     pub fn reduce(self) -> Self {
         OwnedFederation {
             dbms: dbm_list_reduce(self.dbms),
+            dim: self.dim,
         }
     }
 
@@ -82,6 +344,7 @@ impl OwnedFederation {
         }
 
         let mut i = 0;
+        let dim = self.dim;
 
         while i < self.dbms.len() {
             // Take out a dbm and check whether it is a subset of the remainder
@@ -91,9 +354,12 @@ impl OwnedFederation {
             if self.subset_eq_dbm(&dbm) {
                 // this dbm contains the entire remainder,
                 // so the federation can be replaced by it alone
-                return Self { dbms: vec![dbm] };
+                return Self {
+                    dbms: vec![dbm],
+                    dim,
+                };
             } else {
-                let mut dbm_fed = Self::from_dbms(vec![dbm]);
+                let mut dbm_fed = Self::from_dbm(dbm);
                 // dbm <= self
                 if self.superset_eq(&dbm_fed) {
                     // this remainder contains the dbm,
@@ -112,6 +378,125 @@ impl OwnedFederation {
         self
     }
 
+    pub fn merge_expensive_reduce(self, skips: usize) -> Self {
+        self.merge_reduce_internal(true, skips)
+    }
+
+    pub fn merge_reduce(self, skips: usize) -> Self {
+        self.merge_reduce_internal(false, skips)
+    }
+
+    fn merge_reduce_internal(mut self, expensive: bool, skips: usize) -> Self {
+        let mut i = skips;
+        let dim = self.dim;
+
+        'i: while i < self.size() {
+            let mut j = 0;
+            'j: while i < self.size() && j != i {
+                //println!("i={} j={}", i, j);
+                // j < i
+                let dbm_i = &self.dbms[i];
+                let dbm_j = &self.dbms[j];
+
+                let mut nb_ok = if dim <= 2 { 1 } else { 0 };
+
+                let mut subset = true;
+                let mut superset = true;
+
+                for k in 1..dim {
+                    let mut cons_ok = false;
+                    for l in 0..k {
+                        let ij = (k, l);
+                        let ji = (l, k);
+
+                        if check_weak_add(dbm_i[ij], dbm_j[ji])
+                            || check_weak_add(dbm_i[ji], dbm_j[ij])
+                        {
+                            // Next j
+                            j += 1;
+                            continue 'j;
+                        }
+
+                        subset &= dbm_i[ij] <= dbm_j[ij];
+                        superset &= dbm_i[ij] >= dbm_j[ij];
+                        subset &= dbm_i[ji] <= dbm_j[ji];
+                        superset &= dbm_i[ji] >= dbm_j[ji];
+
+                        cons_ok |= dbm_i[ij] == dbm_j[ij] && dbm_i[ji] == dbm_j[ji];
+                    }
+                    if cons_ok {
+                        nb_ok += 1;
+                    }
+                }
+
+                if subset {
+                    //Remove dbm_i
+                    self.dbms.swap_remove(i);
+                    continue 'i;
+                } else if superset {
+                    // Remove dbm_j
+                    self.dbms.remove(j); // Can't swap remove here because order matters
+                    assert!(i > 0);
+                    i -= 1;
+                    continue 'j;
+                } else if nb_ok > 0 {
+                    let cu = dbm_i.clone().convex_union(dbm_j);
+                    let cu_fed = Self::from_dbm(cu.clone());
+                    let mut remainder = cu_fed.subtract_dbm(dbm_i);
+
+                    let mut safe_merge = remainder.subset_eq_dbm(dbm_j);
+                    if !safe_merge {
+                        remainder = remainder.subtract_dbm(dbm_i);
+                        assert!(!remainder.is_empty());
+
+                        if expensive {
+                            // See if (convex union)-(dbmi|dbmj) is included somewhere.
+                            for k in 0..self.size() {
+                                if k != i && k != j {
+                                    remainder = remainder.subtract_dbm(&self.dbms[k]);
+                                    if remainder.is_empty() {
+                                        safe_merge = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            // Remove incrementally DBMs from (convex union)-(dbmi|dbmj)
+                            // and check if the remaining becomes empty.
+                            for k in 0..self.size() {
+                                if k != i && k != j {
+                                    remainder.remove_included_in_dbm(&self.dbms[k]);
+                                    if remainder.is_empty() {
+                                        safe_merge = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    assert!(j < i);
+                    if safe_merge {
+                        self.dbms.swap_remove(i);
+                        self.dbms[j] = cu;
+                    } else {
+                        j += 1;
+                    }
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+
+        //println!("Done");
+        self
+    }
+
+    pub fn inverse(&self) -> Self {
+        Self::universe(self.dim).subtract(self)
+    }
+
     fn subtract_dbm(self, other: &DBM<Valid>) -> Self {
         if self.is_empty() {
             return self;
@@ -119,14 +504,15 @@ impl OwnedFederation {
 
         let mut mingraph = None;
 
-        let mut result = vec![];
+        let mut result = Vec::with_capacity(2 * self.size());
+        let dim = self.dim;
 
         for dbm in self.dbms {
-            if dbm.intersects(other) {
+            if dbm.maybe_intersects(other) {
                 let mingraph = mingraph.get_or_insert_with(|| get_dbm_bit_matrix(other));
                 if mingraph.n_cons == 0 {
                     // That means we remove everything.
-                    return OwnedFederation::EMPTY;
+                    return OwnedFederation::empty(dim);
                 }
                 let partial = dbm.internal_subtract_dbm(other, mingraph);
                 result = dbm_list_union(result, partial);
@@ -135,17 +521,45 @@ impl OwnedFederation {
             }
         }
 
-        Self { dbms: result }
+        Self { dbms: result, dim }
     }
 
-    pub fn append_dbm(mut self, dbm: &DBM<Valid>) -> Self {
-        self.dbms.push(dbm.clone());
+    pub fn append_dbm(&mut self, dbm: DBM<Valid>) {
+        self.dbms.push(dbm);
+    }
+
+    /// Non-convex union of the federations consuming the DBMs in `other` to append to `self`'s DBMs
+    pub fn union(mut self, other: &Self) -> Self {
+        if self.is_empty() {
+            return other.clone();
+        }
+        for dbm in &other.dbms {
+            if self.remove_included_in_dbm(dbm) {
+                self.append_dbm(dbm.clone());
+            }
+        }
+
         self
     }
 
-    pub fn append(mut self, other: &Self) -> Self {
-        self.dbms.append(&mut other.dbms.clone());
-        self
+    fn remove_included_in_dbm(&mut self, dbm: &DBM<Valid>) -> bool {
+        let mut other_not_included = true;
+
+        let mut i = 0;
+        while i < self.size() {
+            match self.dbms[i].relation_to(dbm) {
+                DBMRelation::Subset | DBMRelation::Equal => {
+                    self.dbms.swap_remove(i);
+                }
+                DBMRelation::Superset => {
+                    other_not_included = false;
+                    i += 1;
+                }
+                DBMRelation::Different => i += 1,
+            };
+        }
+
+        other_not_included
     }
 
     pub fn subtract(self, other: &Self) -> Self {
@@ -205,8 +619,17 @@ impl OwnedFederation {
         true
     }
 
+    pub fn superset_eq_dbm(&self, other: &DBM<Valid>) -> bool {
+        let other = Self::from_dbm(other.clone());
+        self.superset_eq(&other)
+    }
+
     pub fn equals(&self, other: &Self) -> bool {
         self.relation(other) == DBMRelation::Equal
+    }
+
+    pub(crate) fn get_dbm(&self, index: usize) -> Option<DBM<Valid>> {
+        self.dbms.get(index).cloned()
     }
 
     /// This is always exact (as opposed to UDBM which has an exact and inexact variant)
@@ -226,6 +649,7 @@ impl OwnedFederation {
     pub fn into_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
         SharedFederation {
             dbms: self.dbms.into_iter().map(|dbm| alloc.to_ptr(dbm)).collect(),
+            dim: self.dim,
         }
     }
 }
