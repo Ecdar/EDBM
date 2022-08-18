@@ -9,9 +9,13 @@ edition = "2021"
 name = "edbm"
 path = "src/lib.rs"
 
-[[bin]]
-name = "mybin"
-path = "src/bin.rs"
+# Enable when generating flamegraph etc.
+# [profile.release]
+# debug = true
+
+[features]
+expensive_asserts = []
 
 [dependencies]
 derive_more = "0.99.17"
+rand = "0.8.5"
