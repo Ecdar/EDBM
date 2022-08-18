@@ -16,11 +16,12 @@ impl BitMatrix {
     }
 }
 
+// Based on the UDBM implementation
 pub fn get_dbm_bit_matrix<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
-    //analyze_for_min_DBM(dbm)
     clean_bit_matrix(dbm, analyze_for_min_dbm(dbm))
 }
 
+// Based on the UDBM implementation
 fn analyze_for_min_dbm<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
     let dim = dbm.dim;
     let mut next = vec![0usize; dim];
@@ -91,6 +92,7 @@ fn analyze_for_min_dbm<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
     }
 }
 
+// Based on the UDBM implementation
 fn clean_bit_matrix<T: DBMState>(dbm: &DBM<T>, bit_matrix: BitMatrix) -> BitMatrix {
     // Clocks must be positive
     let (mut bits, mut n_bcons) = bit_matrix.split();
@@ -106,62 +108,5 @@ fn clean_bit_matrix<T: DBMState>(dbm: &DBM<T>, bit_matrix: BitMatrix) -> BitMatr
     BitMatrix {
         bits,
         n_cons: n_bcons,
-    }
-}
-
-#[allow(unused)]
-mod test {
-    use crate::zones::{minimal_graph::clean_bit_matrix, DBM};
-
-    use super::analyze_for_min_dbm;
-
-    #[test]
-    fn test_zero() {
-        let dbm = DBM::zero(5);
-        let (size, bits) = analyze_for_min_dbm(&dbm).split();
-
-        println!("DBM: {dbm}");
-        println!("size: {size}");
-        println!("bits: {bits}");
-
-        //assert!(false);
-    }
-
-    #[test]
-    fn test_zero_clean() {
-        let dbm = DBM::zero(5);
-        let bm = analyze_for_min_dbm(&dbm);
-        let (bits, size) = clean_bit_matrix(&dbm, bm).split();
-
-        println!("DBM: {dbm}");
-        println!("size: {size}");
-        println!("bits: {bits}");
-
-        //assert!(false);
-    }
-
-    #[test]
-    fn test_init() {
-        let dbm = DBM::init(5);
-        let (bits, size) = analyze_for_min_dbm(&dbm).split();
-
-        println!("DBM: {dbm}");
-        println!("size: {size}");
-        println!("bits: {bits}");
-
-        //assert!(false);
-    }
-
-    #[test]
-    fn test_init_clean() {
-        let dbm = DBM::init(5);
-        let bm = analyze_for_min_dbm(&dbm);
-        let (bits, size) = clean_bit_matrix(&dbm, bm).split();
-
-        println!("DBM: {dbm}");
-        println!("size: {size}");
-        println!("bits: {bits}");
-
-        //assert!(false);
     }
 }
