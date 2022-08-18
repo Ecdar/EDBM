@@ -5,9 +5,12 @@ use std::{
 };
 
 use crate::{
+    expensive_assert,
     util::{
         bit_conversion::BitField,
+        bounds::Bounds,
         constraints::{
+            bound_constants::INFINITY,
             raw_constants::{LE_ZERO, LS_INFINITY},
             Bound, ClockIndex, Inequality, RawInequality,
         },
@@ -46,6 +49,7 @@ impl Debug for DBMRelation {
     }
 }
 
+// Based on the UDBM implementation
 fn try_subset(dbm1: &[RawInequality], dbm2: &[RawInequality], i: usize, n: usize) -> DBMRelation {
     for k in i..n {
         if dbm1[k] > dbm2[k] {
@@ -56,6 +60,7 @@ fn try_subset(dbm1: &[RawInequality], dbm2: &[RawInequality], i: usize, n: usize
     DBMRelation::Subset
 }
 
+// Based on the UDBM implementation
 fn try_superset(dbm1: &[RawInequality], dbm2: &[RawInequality], i: usize, n: usize) -> DBMRelation {
     for k in i..n {
         if dbm1[k] < dbm2[k] {
@@ -149,6 +154,7 @@ impl DBM<Valid> {
         hash
     }
 
+    // Based on the UDBM implementation
     pub fn relation_to(&self, other: &Self) -> DBMRelation {
         use DBMRelation::*;
         assert_eq!(self.dim, other.dim);
@@ -188,6 +194,7 @@ impl DBM<Valid> {
         try_superset(&self.data, &other.data, 1, n) == DBMRelation::Superset
     }
 
+    // Based on the UDBM implementation
     pub fn equals(&self, other: &Self) -> bool {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
@@ -207,6 +214,7 @@ impl DBM<Valid> {
     }
 
     /// Constrains the Valid DBM with `dbm[i,j]=constraint` and closes it immediately so it remains Valid.
+    // Based on the UDBM implementation
     pub fn constrain_and_close_raw(
         self,
         i: ClockIndex,
@@ -261,6 +269,7 @@ impl DBM<Valid> {
         self.make_dirty().constrain_raw(i, j, constraint)
     }
 
+    // Based on the UDBM implementation
     pub fn tighten(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
         debug_assert!(self[(i, j)] > constraint && constraint.as_negated() < self[(j, i)]);
 
@@ -287,6 +296,7 @@ impl DBM<Valid> {
         }
     }
 
+    // Based on the UDBM implementation
     pub fn zero(dim: ClockIndex) -> DBM<Valid> {
         assert!(dim > 0);
         DBM {
@@ -296,11 +306,32 @@ impl DBM<Valid> {
         }
     }
 
+    // Based on the UDBM implementation of `init`
+    pub fn universe(dim: ClockIndex) -> Self {
+        assert!(dim > 0);
+        let mut inf = DBM {
+            dim,
+            data: vec![LS_INFINITY; dim * dim],
+            state: Unsafe {
+                changed: false,
+                hash: None,
+            },
+        };
+
+        for i in 0..dim {
+            inf[(0, i)] = LE_ZERO;
+            inf[(i, i)] = LE_ZERO;
+        }
+
+        unsafe { inf.assert_valid() }
+    }
+
     pub fn init(dim: ClockIndex) -> DBM<Valid> {
         let res = DBM::zero(dim);
         res.up()
     }
 
+    // Based on the UDBM implementation
     pub fn up(self) -> Self {
         let mut dbm = self.make_unsafe();
 
@@ -311,6 +342,26 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
+    // Based on the UDBM implementation
+    pub fn down(self) -> Self {
+        let mut dbm = self.make_unsafe();
+
+        for j in 1..dbm.dim {
+            if dbm[(j, 0)] < LE_ZERO {
+                dbm[(j, 0)] = LE_ZERO;
+
+                for i in 1..dbm.dim {
+                    if dbm[(0, j)] > dbm[(i, j)] && !dbm[(0, i)].is_inf() {
+                        dbm[(0, j)] = dbm[(i, j)];
+                    }
+                }
+            }
+        }
+
+        unsafe { dbm.assert_valid() }
+    }
+
+    // Based on the UDBM implementation
     pub fn intersection(self, src: &Self) -> Option<Self> {
         assert_eq!(self.dim, src.dim);
         let dim = self.dim;
@@ -321,28 +372,49 @@ impl DBM<Valid> {
             for j in 0..dim {
                 if dst[(i, j)] > src[(i, j)] {
                     dst[(i, j)] = src[(i, j)];
-                    if src[(i, j)].as_negated() >= dst[(i, j)] {
+                    if src[(i, j)].as_negated() >= dst[(j, i)] {
                         return None;
                     }
                 }
             }
         }
-        let res = dst.close();
-
-        Some(res.expect("Expected non-empty DBM after close"))
+        dst.close()
     }
 
-    pub fn intersects(&self, other: &Self) -> bool {
+    // Based on the UDBM implementation
+    pub fn convex_union(self, other: &Self) -> Self {
         assert_eq!(self.dim, other.dim);
+        let dim = self.dim;
+
+        let mut dbm = self.make_unsafe();
+
+        for i in 0..dim {
+            for j in 0..dim {
+                if dbm[(i, j)] < other[(i, j)] {
+                    dbm[(i, j)] = other[(i, j)];
+                }
+            }
+        }
+        unsafe { dbm.assert_valid() }
+    }
+
+    pub fn intersects(&self, dbm2: &Self) -> bool {
+        self.maybe_intersects(dbm2) && self.clone().intersection(dbm2).is_some()
+    }
+
+    // Based on the UDBM implementation of `intersects``
+    pub(super) fn maybe_intersects(&self, dbm2: &Self) -> bool {
+        assert_eq!(self.dim, dbm2.dim);
+        let dbm1 = self;
 
         for i in 1..self.dim {
-            for j in 0..self.dim {
-                let dbm1_ij = self[(i, j)];
-                if dbm1_ij != LS_INFINITY && dbm1_ij.as_negated() >= other[(j, i)] {
+            for j in 0..i {
+                let dbm1_ij = dbm1[(i, j)];
+                if dbm1_ij != LS_INFINITY && dbm1_ij.as_negated() >= dbm2[(j, i)] {
                     return false;
                 }
-                let dbm2_ij = other[(i, j)];
-                if dbm2_ij != LS_INFINITY && dbm2_ij.as_negated() >= self[(j, i)] {
+                let dbm2_ij = dbm2[(i, j)];
+                if dbm2_ij != LS_INFINITY && dbm2_ij.as_negated() >= dbm1[(j, i)] {
                     return false;
                 }
             }
@@ -355,11 +427,13 @@ impl DBM<Valid> {
         self.satisfies_raw(i, j, constraint.into())
     }
 
+    // Based on the UDBM implementation
     pub fn satisfies_raw(&self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> bool {
         assert!(i != j);
         !(self[(i, j)] > constraint && constraint.as_negated() >= self[(j, i)])
     }
 
+    // Based on the UDBM implementation
     pub fn is_unbounded(&self) -> bool {
         for i in 1..self.dim {
             if self[(i, 0)] < LS_INFINITY {
@@ -370,6 +444,107 @@ impl DBM<Valid> {
         true
     }
 
+    // Based on the UDBM implementation
+    pub fn extrapolate_max_bounds(self, bounds: &Bounds) -> Self {
+        let mut dbm = self.make_unsafe();
+        let mut changed = false;
+        use Inequality::*;
+
+        // 1st row
+        for j in 1..dbm.dim {
+            if let Some(max_j) = bounds.get_max(j) {
+                if dbm[(0, j)].bound() < -max_j {
+                    dbm[(0, j)] = if max_j >= 0 {
+                        LS(-max_j).into()
+                    } else {
+                        LE_ZERO
+                    };
+                    changed = true;
+                }
+            } else {
+                dbm[(0, j)] = LE_ZERO;
+            }
+        }
+
+        // other rows
+        for i in 1..dbm.dim {
+            for j in 0..dbm.dim {
+                if i != j {
+                    if let Some(max_j) = bounds.get_max(j) {
+                        let max_i = bounds.get_max(i);
+                        let bound = dbm[(i, j)].bound();
+                        if (max_i.is_none() || bound > max_i.unwrap()) && bound != INFINITY {
+                            dbm[(i, j)] = LS_INFINITY;
+                            changed |= max_i.is_some();
+                        } else if bound < -max_j {
+                            dbm[(i, j)] = LS(-max_j).into();
+                            changed = true;
+                        }
+                    } else {
+                        dbm[(i, j)] = dbm[(i, 0)];
+                    }
+                }
+            }
+        }
+
+        if changed {
+            dbm.close_after_extrapolate(bounds)
+        } else {
+            unsafe { dbm.assert_valid() }
+        }
+    }
+
+    // Based on the UDBM implementation
+    pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
+        let mut dbm = self.make_unsafe();
+        let mut changed = false;
+        use Inequality::*;
+
+        // 1st row
+        for j in 1..dbm.dim {
+            if let Some(upper_j) = bounds.get_upper(j) {
+                if dbm[(0, j)].bound() < -upper_j {
+                    dbm[(0, j)] = if upper_j >= 0 {
+                        LS(-upper_j).into()
+                    } else {
+                        LE_ZERO
+                    };
+                    changed = true;
+                }
+            } else {
+                dbm[(0, j)] = LE_ZERO;
+            }
+        }
+
+        // other rows
+        for i in 1..dbm.dim {
+            for j in 0..dbm.dim {
+                if i != j {
+                    if let Some(upper_j) = bounds.get_upper(j) {
+                        let lower_i = bounds.get_lower(i);
+                        let bound = dbm[(i, j)].bound();
+                        if (lower_i.is_none() || bound > lower_i.unwrap()) && bound != INFINITY {
+                            dbm[(i, j)] = LS_INFINITY;
+                            changed |= lower_i.is_some();
+                        } else if bound < -upper_j {
+                            dbm[(i, j)] = LS(-upper_j).into();
+                            changed = true;
+                        }
+                    } else {
+                        dbm[(i, j)] = dbm[(i, 0)];
+                    }
+                }
+            }
+        }
+
+        if changed {
+            dbm.close_after_extrapolate(bounds)
+        } else {
+            unsafe { dbm.assert_valid() }
+        }
+    }
+
+    // Based on the UDBM implementation
     pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
         assert!(clock > 0);
 
@@ -386,6 +561,76 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
+    // Based on the UDBM implementation
+    pub fn update_clock_clock(self, clock_i: ClockIndex, clock_j: ClockIndex) -> Self {
+        assert!(clock_i > 0 && clock_j > 0);
+
+        if clock_i == clock_j {
+            return self;
+        }
+        let mut dbm = self.make_unsafe();
+
+        for k in 0..dbm.dim {
+            if clock_i != k {
+                dbm[(clock_i, k)] = dbm[(clock_j, k)];
+                dbm[(k, clock_i)] = dbm[(k, clock_j)];
+            }
+        }
+
+        unsafe { dbm.assert_valid() }
+    }
+
+    // Based on the UDBM implementation
+    pub fn update_increment(self, clock: ClockIndex, inc: Bound) -> Self {
+        assert!(clock > 0);
+        if inc == 0 {
+            return self;
+        }
+        use Inequality::*;
+        let inc = LS(inc).into();
+
+        let mut dbm = self.make_unsafe();
+
+        for i in 0..dbm.dim {
+            if dbm[(clock, i)] < LS_INFINITY {
+                dbm[(clock, i)] += inc;
+            }
+
+            if dbm[(i, clock)] < LS_INFINITY {
+                dbm[(i, clock)] -= inc;
+            }
+        }
+
+        unsafe { dbm.assert_valid() }
+    }
+
+    // Based on the UDBM implementation
+    pub fn update(self, i: ClockIndex, j: ClockIndex, val: Bound) -> Self {
+        assert!(i > 0 && j > 0);
+        if i == j {
+            return self.update_increment(i, val);
+        }
+
+        if val == 0 {
+            return self.update_clock_clock(i, j);
+        }
+
+        use Inequality::*;
+        let val: RawInequality = LS(val).into();
+
+        let mut dbm = self.make_unsafe();
+
+        for k in 0..dbm.dim {
+            dbm[(i, k)] = dbm[(j, k)].raw_inc(val);
+            dbm[(k, i)] = dbm[(k, j)].raw_dec(val);
+        }
+        // Restore diagonal
+        dbm[(i, i)] = LE_ZERO;
+
+        unsafe { dbm.assert_valid() }
+    }
+
+    // Based on the UDBM implementation
     pub fn free_clock(self, clock: ClockIndex) -> Self {
         check_indices!(self, clock);
         assert!(clock > 0);
@@ -401,7 +646,7 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
-    fn make_dirty(self) -> DBM<Dirty> {
+    pub(super) fn make_dirty(self) -> DBM<Dirty> {
         DBM {
             dim: self.dim,
             data: self.data,
@@ -409,9 +654,10 @@ impl DBM<Valid> {
         }
     }
 
-    /// Tighten the dbm with the negated constraints of rhs dbm
+    /// Tighten the dbm with the negated constraints of rhs dbm, potentially splitting the dbm in two.
+    // Based on the UDBM implementation
     pub fn subtract_dbm(self, rhs: &DBM<Valid>) -> Vec<DBM<Valid>> {
-        if self.intersects(rhs) {
+        if self.maybe_intersects(rhs) {
             let matrix = get_dbm_bit_matrix(rhs);
             if matrix.n_cons == 0 {
                 // dbm2 is unconstrained => result = empty
@@ -423,9 +669,10 @@ impl DBM<Valid> {
         }
     }
 
+    // Based on the UDBM implementation
     pub(super) fn internal_subtract_dbm(
         self,
-        rhs: &DBM<Valid>,
+        dbm2: &DBM<Valid>,
         matrix: &BitMatrix,
     ) -> Vec<DBM<Valid>> {
         let dim = self.dim;
@@ -438,7 +685,7 @@ impl DBM<Valid> {
             .filter(|&index| {
                 let (i, j) = index;
 
-                rhs[(i, j)] < dbm1[(i, j)]
+                dbm2[(i, j)] < dbm1[(i, j)]
             })
             .collect();
 
@@ -451,7 +698,7 @@ impl DBM<Valid> {
         let mut c = None;
 
         while n_cons > 0 {
-            /*********************** find constraint i,j to subtract ***************/
+            // Find constraint i,j to subtract
             let mut bestv: RawInequality = RawInequality::MAX;
             let mut k = 0;
 
@@ -459,13 +706,13 @@ impl DBM<Valid> {
                 let (ci, cj) = indices[k];
 
                 // If dbm2 outside dbm1 then no more subtraction.
-                debug_assert!(rhs[(ci, cj)] != LS_INFINITY);
-                if rhs[(ci, cj)].as_negated() > dbm1[(cj, ci)] {
+                debug_assert!(dbm2[(ci, cj)] != LS_INFINITY);
+                if dbm2[(ci, cj)].as_negated() >= dbm1[(cj, ci)] {
                     result.push(dbm1);
                     return result;
                 }
 
-                if rhs[(ci, cj)] >= dbm1[(ci, cj)] {
+                if dbm2[(ci, cj)] >= dbm1[(ci, cj)] {
                     n_cons -= 1;
                     if n_cons == 0 {
                         return result;
@@ -485,7 +732,7 @@ impl DBM<Valid> {
                         // Don't break the loop since the 1st test may
                         // cancel the split.
                     } else {
-                        let cv = worst_value(&dbm1, rhs, ci, cj);
+                        let cv = worst_value(&dbm1, dbm2, ci, cj);
 
                         if bestv > cv {
                             bestv = cv;
@@ -499,14 +746,16 @@ impl DBM<Valid> {
             }
 
             let c = c.unwrap(); // Found one index
+            assert!(c < n_cons);
             n_cons -= 1;
             indices[c] = indices[n_cons]; // Swap the last
 
             debug_assert!(i != j);
-            debug_assert!(rhs[(i, j)] != LS_INFINITY);
-            /******************* Subtraction for dbm2[i,j] *********************/
-            if rhs[(i, j)] < dbm1[(i, j)] {
-                let neg_cons = rhs[(i, j)].as_negated();
+            debug_assert!(dbm2[(i, j)] != LS_INFINITY);
+            // Subtraction for dbm2[i,j]
+            if dbm2[(i, j)] < dbm1[(i, j)] {
+                let neg_cons = dbm2[(i, j)].as_negated();
+
                 debug_assert!(neg_cons < dbm1[(j, i)]);
                 if n_cons == 0 {
                     // is last constraint?
@@ -514,7 +763,7 @@ impl DBM<Valid> {
                     return result;
                 }
                 result.push(dbm1.clone().tighten(j, i, neg_cons));
-                dbm1 = dbm1.tighten(i, j, rhs[(i, j)]) // continue with remainders
+                dbm1 = dbm1.tighten(i, j, dbm2[(i, j)]) // continue with remainders
             }
         }
 
@@ -531,7 +780,7 @@ impl DBM<Valid> {
             },
         };
 
-        debug_assert!(dbm.is_diagonal_ok_and_clocks_positive());
+        expensive_assert!(dbm.is_diagonal_ok_and_clocks_positive());
 
         dbm
     }
@@ -547,6 +796,7 @@ impl TryInto<DBM<Valid>> for DBM<Dirty> {
 
 impl DBM<Dirty> {
     /// Constrains the DBM with `dbm[i,j]=constraint` without closing it afterwards
+    // Based on the UDBM implementation
     pub fn constrain_raw(
         mut self,
         i: ClockIndex,
@@ -572,6 +822,7 @@ impl DBM<Dirty> {
         self.constrain_raw(i, j, constraint.into())
     }
 
+    // Based on the UDBM implementation
     fn close_touched(self) -> Option<DBM<Valid>> {
         if self.state.is_clean() || self.dim < 1 {
             return Some(unsafe { self.make_unsafe().assert_valid() });
@@ -604,18 +855,6 @@ impl DBM<Dirty> {
                         }
                     }
 
-                    /* UDBM COMMENT:
-                     * *MUST* be there (ideally before the loop on j)
-                     * to avoid numerical problems: computation may
-                     * diverge to -infinity and go beyond reasonable
-                     * bounds and produce numerical errors in case of
-                     * empty DBMs. This was exhibited by extensive testing.
-                     * The old implementation is therefor numerically wrong.
-                     * Having the test here also allows for testing non
-                     * emptiness of a DBM.
-                     * It is still possible to have numerical errors but
-                     * it is much more difficult now.
-                     */
                     if dbm[(i, i)] < LE_ZERO {
                         // the new DBM is empty
                         return None;
@@ -632,18 +871,12 @@ impl DBM<Dirty> {
     }
 
     #[allow(unused)]
+    // Based on the UDBM implementation
     fn close_all(mut self) -> Option<DBM<Valid>> {
         let mut dbm = self.make_unsafe();
 
         for k in 0..dbm.dim {
             for i in 0..dbm.dim {
-                /* UDBM COMMENT:
-                 * optimization: if i == k
-                 * the loop will tighten dbm[i,j] with dbm[i,i] + dbm[i,j]
-                 * which will change nothing, even for i == j (if < 0 then
-                 * more < 0, but still empty).
-                 */
-
                 if i != k {
                     let dbm_ik = dbm[(i, k)];
                     if dbm_ik != LS_INFINITY {
@@ -658,18 +891,7 @@ impl DBM<Dirty> {
                             }
                         }
                     }
-                    /* UDBM COMMENT:
-                     * *MUST* be there (ideally before the loop on j)
-                     * to avoid numerical problems: computation may
-                     * diverge to -infinity and go beyond reasonable
-                     * bounds and produce numerical errors in case of
-                     * empty DBMs. This was exhibited by extensive testing.
-                     * The old implementation is therefor numerically wrong.
-                     * Having the test here also allows for testing non
-                     * emptiness of a DBM.
-                     * It is still possible to have numerical errors but
-                     * it is much more difficult now.
-                     */
+
                     if dbm[(i, i)] < LE_ZERO {
                         // the new DBM is empty
                         return None;
@@ -683,6 +905,7 @@ impl DBM<Dirty> {
         Some(unsafe { dbm.assert_valid() })
     }
 
+    // Based on the UDBM implementation
     pub fn up(mut self) -> Self {
         for i in 1..self.dim {
             self[(i, 0)] = LS_INFINITY;
@@ -701,13 +924,14 @@ impl DBM<Dirty> {
             },
         };
 
-        debug_assert!(dbm.is_diagonal_ok_and_clocks_positive());
+        expensive_assert!(dbm.is_diagonal_ok_and_clocks_positive());
 
         dbm
     }
 }
 
 impl DBM<Unsafe> {
+    // Based on the UDBM implementation
     pub fn is_empty(&self) -> bool {
         for i in 0..self.dim {
             if self[(i, i)] < LE_ZERO {
@@ -717,6 +941,7 @@ impl DBM<Unsafe> {
         false
     }
 
+    // Based on the UDBM implementation
     fn is_diagonal_ok_and_clocks_positive(&self) -> bool {
         for i in 0..self.dim {
             if self[(i, i)] > LE_ZERO {
@@ -735,6 +960,7 @@ impl DBM<Unsafe> {
         true
     }
 
+    // Based on the UDBM implementation
     pub fn is_valid(&self) -> bool {
         if !self.is_closed() {
             println!("Not closed");
@@ -756,6 +982,7 @@ impl DBM<Unsafe> {
         true
     }
 
+    // Based on the UDBM implementation
     fn is_closed(&self) -> bool {
         for k in 0..self.dim {
             for i in 0..self.dim {
@@ -777,6 +1004,7 @@ impl DBM<Unsafe> {
     /// Efficient close after adding single constraint
     ///
     /// Warning: Order of `b` and `a` matters! When `DBM(i,j) = c` call `self.close_ij(b=i,a=j)`
+    // Based on the UDBM implementation
     fn close_ij(self, b: ClockIndex, a: ClockIndex) -> Option<DBM<Valid>> {
         check_indices!(self, b, a);
         assert!(a != b);
@@ -830,15 +1058,44 @@ impl DBM<Unsafe> {
         }
     }
 
-    /// Assert that a DBM is closed without checking (in release builds)
+    // Based on the UDBM implementation
+    fn close_after_extrapolate(self, bounds: &Bounds) -> DBM<Valid> {
+        let dim = self.dim;
+        let mut dbm = self;
+        for k in 0..dim {
+            if bounds.get_max(k).is_some() {
+                for i in 0..dim {
+                    if i != k {
+                        let dbm_ik = dbm[(i, k)];
+                        if !dbm_ik.is_inf() {
+                            for j in 0..dim {
+                                let dbm_kj = dbm[(k, j)];
+                                if !dbm_kj.is_inf() {
+                                    let dbm_ikkj = dbm_ik.add_raw(dbm_kj);
+                                    if dbm[(i, j)] > dbm_ikkj {
+                                        dbm[(i, j)] = dbm_ikkj;
+                                    }
+                                }
+                            }
+                        }
+                        assert!(dbm[(i, i)] >= LE_ZERO);
+                    }
+                    assert!(dbm[(i, i)] == LE_ZERO);
+                }
+            }
+        }
+
+        unsafe { dbm.assert_valid() }
+    }
+
+    /// Assert that a DBM is closed without checking (The `expensive_asserts` feature enables a (slow) check here)
     ///
-    /// This method is always memory safe!
+    /// This method is always memory/thread safe!
     ///
-    /// It is 'only' unsafe in that it can be called on an unclosed DBM
-    /// which breaks the preconditions on every method which requires closed DBMs
-    ///
+    /// It is 'only' unsafe in that it can be called on an unclosed DBM (When the `expensive_asserts` feature is disabled)
+    /// which breaks the preconditions on every method which requires closed DBMs (all of impl DBM<Valid>)
     unsafe fn assert_valid(self) -> DBM<Valid> {
-        debug_assert!(self.is_valid());
+        expensive_assert!(self.is_valid());
 
         let hash = if !self.state.changed {
             self.state.hash
