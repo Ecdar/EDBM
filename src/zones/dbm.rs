@@ -1176,6 +1176,7 @@ impl<T: DBMState> Display for DBM<T> {
 mod test {
     use super::DBM;
     use crate::util::bit_conversion::{u32s_to_represent_bits, u32s_to_represent_bytes};
+    use crate::zones::rand_gen::random_dbm;
     use crate::zones::DBMRelation;
 
     #[test]
@@ -1317,6 +1318,14 @@ mod test {
     }
 
     #[test]
+    fn random_dbms() {
+        for _ in 0..1000 {
+            let dbm = random_dbm(5);
+            println!("Rand dbm: \n {dbm}");
+        }
+    }
+
+    #[test]
     fn dbm_order1() {
         let zero = DBM::zero(8);
         let init = DBM::init(8);
@@ -1364,5 +1373,46 @@ mod test {
         assert_eq!(u32s_to_represent_bytes(4), 1);
         assert_eq!(u32s_to_represent_bytes(5), 2);
         assert_eq!(u32s_to_represent_bytes(9), 3);
+    }
+
+    const TEST_ATTEMPTS: usize = 1000;
+    const DIMS: &[usize] = &[2, 5];
+
+    #[test]
+    fn rand_convex_union_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                let dbm1 = random_dbm(dim);
+                let dbm2 = random_dbm(dim);
+
+                let c_union = dbm1.clone().convex_union(&dbm2);
+
+                assert!(dbm1.subset_eq(&c_union));
+                assert!(dbm2.subset_eq(&c_union));
+            }
+        }
+    }
+
+    #[test]
+    fn rand_intersection_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                let dbm1 = random_dbm(dim);
+                let dbm2 = random_dbm(dim);
+
+                let dbm12_opt = dbm1.clone().intersection(&dbm2);
+                let dbm21_opt = dbm2.clone().intersection(&dbm1);
+
+                assert_eq!(dbm12_opt.is_none(), dbm21_opt.is_none());
+
+                if let Some(dbm12) = dbm12_opt {
+                    let dbm21 = dbm21_opt.unwrap();
+                    assert!(dbm12.equals(&dbm21));
+
+                    assert!(dbm12.subset_eq(&dbm1));
+                    assert!(dbm12.subset_eq(&dbm2));
+                }
+            }
+        }
     }
 }
