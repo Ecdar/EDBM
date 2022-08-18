@@ -145,7 +145,7 @@ impl BitField {
                         ijs.push((i, j));
                         found += 1;
 
-                        if found > n_cons {
+                        if found == n_cons {
                             return ijs;
                         }
                     }
