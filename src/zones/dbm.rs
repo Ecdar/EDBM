@@ -13,7 +13,7 @@ use crate::{
         constraints::{
             bound_constants::INFINITY,
             raw_constants::{LE_ZERO, LS_INFINITY},
-            Bound, ClockIndex, Inequality, RawInequality,
+            Bound, ClockIndex, Conjunction, Constraint, Inequality, RawInequality,
         },
     },
     zones::util::worst_value,
@@ -288,6 +288,15 @@ impl DBM<Valid> {
         let mut dbm = self.make_unsafe();
         dbm[(i, j)] = constraint;
         dbm.close_ij(i, j).expect("Tightening must never be empty")
+    }
+
+    pub fn from_conjunction(conjunction: &Conjunction, dim: ClockIndex) -> DBM<Valid> {
+        let mut dbm = DBM::universe(dim);
+        for cons in conjunction.iter() {
+            dbm = dbm.tighten(cons.i, cons.j, cons.raw_ineq);
+        }
+
+        dbm
     }
 
     pub fn new(dim: ClockIndex, value: Inequality) -> DBM<Dirty> {
@@ -1123,6 +1132,20 @@ impl DBM<Unsafe> {
     }
 }
 
+impl<T: DBMState> DBM<T> {
+    pub fn conjunction_of_minimal_constraints(&self) -> Conjunction {
+        let (bf, n_cons) = get_dbm_bit_matrix(self).split();
+        let n_cons = n_cons as usize;
+        let ijs = bf.get_ijs(self.dim, n_cons);
+        let mut constraints = Vec::with_capacity(n_cons);
+        for (i, j) in ijs.into_iter() {
+            constraints.push(Constraint::new(i, j, self[(i, j)]));
+        }
+
+        Conjunction::new(constraints)
+    }
+}
+
 impl<T: DBMState> Index<(ClockIndex, ClockIndex)> for DBM<T> {
     type Output = RawInequality;
 
@@ -1407,6 +1430,20 @@ mod test {
                     assert!(dbm12.subset_eq(&dbm1));
                     assert!(dbm12.subset_eq(&dbm2));
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn rand_from_constraints_test() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                let dbm1 = random_dbm(dim);
+                let conj = dbm1.conjunction_of_minimal_constraints();
+
+                let dbm2 = DBM::from_conjunction(&conj, dim);
+
+                assert!(dbm1.equals(&dbm2));
             }
         }
     }

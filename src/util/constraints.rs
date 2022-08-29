@@ -318,3 +318,60 @@ impl Add for Inequality {
         (raw1.add_raw(raw2)).into()
     }
 }
+
+pub struct Conjunction {
+    pub constraints: Vec<Constraint>,
+}
+
+impl Conjunction {
+    pub fn unconstrained() -> Self {
+        Self::new(vec![])
+    }
+
+    pub fn new(constraints: Vec<Constraint>) -> Self {
+        Self { constraints }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
+        self.constraints.iter()
+    }
+}
+
+pub struct Disjunction {
+    pub conjunctions: Vec<Conjunction>,
+}
+
+impl Disjunction {
+    pub fn unconstrained() -> Self {
+        Self::new(vec![Conjunction::unconstrained()])
+    }
+
+    pub fn new(conjunctions: Vec<Conjunction>) -> Self {
+        Self { conjunctions }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Conjunction> {
+        self.conjunctions.iter()
+    }
+}
+
+/// Represents a constraint of the form `i-j ≤/< c`. Where `raw_ineq` represents c and the strictness
+pub struct Constraint {
+    pub i: ClockIndex,
+    pub j: ClockIndex,
+    pub raw_ineq: RawInequality,
+}
+
+impl Constraint {
+    pub fn new(i: ClockIndex, j: ClockIndex, ineq: RawInequality) -> Self {
+        Self {
+            i,
+            j,
+            raw_ineq: ineq,
+        }
+    }
+
+    pub fn ineq(&self) -> Inequality {
+        self.raw_ineq.into()
+    }
+}

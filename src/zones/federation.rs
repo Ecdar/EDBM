@@ -4,7 +4,7 @@ use crate::{
     memory::allocator::{DBMAllocator, DBMPtr},
     util::{
         bounds::Bounds,
-        constraints::{check_weak_add, Bound, ClockIndex, Inequality, RawInequality},
+        constraints::{check_weak_add, Bound, ClockIndex, Disjunction, Inequality, RawInequality},
     },
 };
 
@@ -1248,6 +1248,23 @@ mod test {
                         fed4,
                         bounds
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn from_constraints_test() {
+        let mut rng = rand::thread_rng();
+
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let disj = fed1.disjunction_of_minimal_constraints();
+                    let fed2 = OwnedFederation::from_disjunction(&disj, dim);
+
+                    assert!(fed1.equals(&fed2));
                 }
             }
         }
