@@ -2,6 +2,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
+    vec,
 };
 
 use crate::{
@@ -20,6 +21,17 @@ use crate::{
 use std::hash::{Hash, Hasher};
 
 use super::minimal_graph::{get_dbm_bit_matrix, BitMatrix};
+
+pub trait ImmutableDBM {
+    fn as_valid_ref(&self) -> &DBM<Valid>;
+}
+
+impl ImmutableDBM for DBM<Valid> {
+    #[inline(always)]
+    fn as_valid_ref(&self) -> &DBM<Valid> {
+        self
+    }
+}
 
 pub trait DBMState: Sized {}
 

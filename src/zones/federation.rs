@@ -11,39 +11,154 @@ use crate::{
 use super::{
     minimal_graph::get_dbm_bit_matrix,
     util::{dbm_list_reduce, dbm_list_union},
-    DBMRelation, Dirty, Valid, DBM,
+    DBMRelation, Dirty, ImmutableDBM, Valid, DBM,
 };
 
 /// Shared Federations are immutable but can share memory of internal DBMs using an allocator
-#[derive(Clone)]
-pub struct SharedFederation {
-    pub dim: ClockIndex,
-    dbms: Vec<DBMPtr>,
-}
+pub type SharedFederation = Federation<DBMPtr>;
+pub type OwnedFederation = Federation<DBM<Valid>>;
 
 /// Owned Federations are mutable. They own the internal DBMs allowing for efficient (lockless) internal mutability.
 #[derive(Clone)]
-pub struct OwnedFederation {
+pub struct Federation<T>
+where
+    T: ImmutableDBM,
+{
     pub dim: ClockIndex,
-    dbms: Vec<DBM<Valid>>,
+    pub(crate) dbms: Vec<T>,
 }
 
-impl OwnedFederation {
-    pub fn empty(dim: ClockIndex) -> OwnedFederation {
-        OwnedFederation { dim, dbms: vec![] }
+impl<T: ImmutableDBM> Federation<T> {
+    pub fn owned_clone(&self) -> OwnedFederation {
+        Federation {
+            dim: self.dim,
+            dbms: self
+                .dbms
+                .iter()
+                .map(|dbm| dbm.as_valid_ref().clone())
+                .collect(),
+        }
     }
+
+    pub fn empty(dim: ClockIndex) -> Self {
+        Self { dim, dbms: vec![] }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.dbms.is_empty()
+    }
+    pub fn size(&self) -> usize {
+        self.dbms.len()
     }
 
     pub fn is_unbounded(&self) -> bool {
         for dbm in &self.dbms {
-            if dbm.is_unbounded() {
+            if dbm.as_valid_ref().is_unbounded() {
                 return true;
             }
         }
 
         false
+    }
+
+    fn try_get_only_dbm(&self) -> Option<&T> {
+        if self.dbms.len() == 1 {
+            return self.dbms.first();
+        }
+        None
+    }
+
+    fn first_dbm(&self) -> &T {
+        assert!(!self.is_empty());
+        self.dbms.first().unwrap()
+    }
+
+    fn is_subtraction_empty<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        if self.is_empty() {
+            return true;
+        } else if other.is_empty() {
+            return false;
+        }
+
+        if self.subset_eq_dbm(other.first_dbm().as_valid_ref()) {
+            true // If all DBMs are subset_eq, the subtraction is empty
+        } else if other.size() == 1 {
+            false // If it is the only DBM we know the result (!subset_eq)
+        } else {
+            self.owned_clone().subtract(other).is_empty()
+        }
+    }
+
+    pub fn subset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        self.is_subtraction_empty(other)
+    }
+
+    pub fn superset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        other.is_subtraction_empty(self)
+    }
+
+    pub fn subset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+
+        for self_dbm in &self.dbms {
+            if !self_dbm.as_valid_ref().subset_eq(other.as_valid_ref()) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn inverse(&self) -> OwnedFederation {
+        OwnedFederation::universe(self.dim).subtract(self)
+    }
+
+    pub fn superset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
+        let other = OwnedFederation::from_dbm(other.as_valid_ref().clone());
+        self.superset_eq(&other)
+    }
+
+    pub fn equals<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        self.relation(other) == DBMRelation::Equal
+    }
+
+    /// This is always exact (as opposed to UDBM which has an exact and inexact variant)
+    pub fn relation<D: ImmutableDBM>(&self, other: &Federation<D>) -> DBMRelation {
+        use DBMRelation::*;
+        let self_included = self.is_subtraction_empty(other);
+        let other_included = other.is_subtraction_empty(self);
+
+        match (self_included, other_included) {
+            (true, true) => Equal,
+            (true, false) => Subset,
+            (false, true) => Superset,
+            (false, false) => Different,
+        }
+    }
+
+    pub fn disjunction_of_minimal_constraints(&self) -> Disjunction {
+        let fed = self.owned_clone().merge_expensive_reduce(0);
+        let mut conjunctions = Vec::with_capacity(self.size());
+        for dbm in &fed.dbms {
+            let conjunction = dbm.as_valid_ref().conjunction_of_minimal_constraints();
+            conjunctions.push(conjunction);
+        }
+
+        Disjunction::new(conjunctions)
+    }
+}
+
+impl OwnedFederation {
+    pub fn from_disjunction(disjunction: &Disjunction, dim: ClockIndex) -> Self {
+        let mut fed = Federation::empty(dim);
+        for conj in disjunction.iter() {
+            // Don't need append_dbm here as we know the DBMs are as reduced as possible
+            fed.dbms.push(DBM::from_conjunction(conj, dim));
+        }
+
+        fed
     }
 
     /// Constrains the federation DBMs with `dbm[i,j]=constraint`.
@@ -276,22 +391,6 @@ impl OwnedFederation {
         }
     }
 
-    pub fn size(&self) -> usize {
-        self.dbms.len()
-    }
-
-    fn try_get_only_dbm(&self) -> Option<&DBM<Valid>> {
-        if self.dbms.len() == 1 {
-            return self.dbms.first();
-        }
-        None
-    }
-
-    fn first_dbm(&self) -> &DBM<Valid> {
-        assert!(!self.is_empty());
-        self.dbms.first().unwrap()
-    }
-
     pub fn from_dbm(dbm: DBM<Valid>) -> Self {
         let dim = dbm.dim;
         OwnedFederation {
@@ -393,7 +492,6 @@ impl OwnedFederation {
         'i: while i < self.size() {
             let mut j = 0;
             'j: while i < self.size() && j != i {
-                //println!("i={} j={}", i, j);
                 // j < i
                 let dbm_i = &self.dbms[i];
                 let dbm_j = &self.dbms[j];
@@ -493,11 +591,7 @@ impl OwnedFederation {
         self
     }
 
-    pub fn inverse(&self) -> Self {
-        Self::universe(self.dim).subtract(self)
-    }
-
-    fn subtract_dbm(self, other: &DBM<Valid>) -> Self {
+    fn subtract_dbm<D: ImmutableDBM>(self, other: &D) -> Self {
         if self.is_empty() {
             return self;
         }
@@ -507,6 +601,7 @@ impl OwnedFederation {
         let mut result = Vec::with_capacity(2 * self.size());
         let dim = self.dim;
 
+        let other = other.as_valid_ref();
         for dbm in self.dbms {
             if dbm.maybe_intersects(other) {
                 let mingraph = mingraph.get_or_insert_with(|| get_dbm_bit_matrix(other));
@@ -529,11 +624,13 @@ impl OwnedFederation {
     }
 
     /// Non-convex union of the federations consuming the DBMs in `other` to append to `self`'s DBMs
-    pub fn union(mut self, other: &Self) -> Self {
+    pub fn union<D: ImmutableDBM>(mut self, other: &Federation<D>) -> Self {
         if self.is_empty() {
-            return other.clone();
+            return other.owned_clone();
         }
+
         for dbm in &other.dbms {
+            let dbm = dbm.as_valid_ref();
             if self.remove_included_in_dbm(dbm) {
                 self.append_dbm(dbm.clone());
             }
@@ -562,7 +659,7 @@ impl OwnedFederation {
         other_not_included
     }
 
-    pub fn subtract(self, other: &Self) -> Self {
+    pub fn subtract<D: ImmutableDBM>(self, other: &Federation<D>) -> Self {
         let mut res = self;
 
         if let Some(dbm) = other.try_get_only_dbm() {
@@ -581,69 +678,8 @@ impl OwnedFederation {
         res
     }
 
-    fn is_subtraction_empty(&self, other: &OwnedFederation) -> bool {
-        if self.is_empty() {
-            return true;
-        } else if other.is_empty() {
-            return false;
-        }
-
-        if self.subset_eq_dbm(other.first_dbm()) {
-            true // If all DBMs are subset_eq, the subtraction is empty
-        } else if other.size() == 1 {
-            false // If it is the only DBM we know the result (!subset_eq)
-        } else {
-            self.clone().subtract(other).is_empty()
-        }
-    }
-
-    pub fn subset_eq(&self, other: &Self) -> bool {
-        self.is_subtraction_empty(other)
-    }
-
-    pub fn superset_eq(&self, other: &Self) -> bool {
-        other.is_subtraction_empty(self)
-    }
-
-    pub fn subset_eq_dbm(&self, other: &DBM<Valid>) -> bool {
-        if self.is_empty() {
-            return true;
-        }
-
-        for self_dbm in &self.dbms {
-            if !self_dbm.subset_eq(other) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    pub fn superset_eq_dbm(&self, other: &DBM<Valid>) -> bool {
-        let other = Self::from_dbm(other.clone());
-        self.superset_eq(&other)
-    }
-
-    pub fn equals(&self, other: &Self) -> bool {
-        self.relation(other) == DBMRelation::Equal
-    }
-
     pub(crate) fn get_dbm(&self, index: usize) -> Option<DBM<Valid>> {
         self.dbms.get(index).cloned()
-    }
-
-    /// This is always exact (as opposed to UDBM which has an exact and inexact variant)
-    pub fn relation(&self, other: &Self) -> DBMRelation {
-        use DBMRelation::*;
-        let self_included = self.is_subtraction_empty(other);
-        let other_included = other.is_subtraction_empty(self);
-
-        match (self_included, other_included) {
-            (true, true) => Equal,
-            (true, false) => Subset,
-            (false, true) => Superset,
-            (false, false) => Different,
-        }
     }
 
     pub fn into_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
@@ -676,13 +712,6 @@ impl SharedFederation {
     pub fn into_owned(self) -> OwnedFederation {
         OwnedFederation {
             dbms: self.dbms.into_iter().map(|ptr| ptr.take_dbm()).collect(),
-            dim: self.dim,
-        }
-    }
-
-    pub fn owned_clone(&self) -> OwnedFederation {
-        OwnedFederation {
-            dbms: self.dbms.iter().map(|ptr| ptr.clone_dbm()).collect(),
             dim: self.dim,
         }
     }
@@ -1186,7 +1215,6 @@ mod test {
         for &dim in DIMS {
             for _ in 0..TEST_ATTEMPTS {
                 for size in 1..TEST_SIZE {
-                    println!("dim: {}, size: {}", dim, size);
                     let mut bounds = Bounds::new(dim);
                     for i in 1..dim {
                         let low = rng.gen_range(-500..500);

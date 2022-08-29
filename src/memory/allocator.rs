@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use crate::zones::{Valid, DBM};
+use crate::zones::{ImmutableDBM, OwnedFederation, SharedFederation, Valid, DBM};
 
 type HashType = u64;
 
@@ -27,10 +27,6 @@ impl DBMPtr {
     pub fn weak_count(&self) -> usize {
         Arc::weak_count(&self.arc)
     }
-
-    pub fn clone_dbm(&self) -> DBM<Valid> {
-        self.arc.as_ref().clone()
-    }
     /// If the ptr is the only reference to the underlying DBM move it out, otherwise return a clone of it
     ///
     /// Necessary to call methods on the underlying DBM
@@ -42,6 +38,13 @@ impl DBMPtr {
     }
 }
 
+impl ImmutableDBM for DBMPtr {
+    #[inline(always)]
+    fn as_valid_ref(&self) -> &DBM<Valid> {
+        self.arc.as_ref()
+    }
+}
+
 impl From<Arc<DBM<Valid>>> for DBMPtr {
     fn from(arc: Arc<DBM<Valid>>) -> Self {
         Self { arc }
@@ -49,6 +52,12 @@ impl From<Arc<DBM<Valid>>> for DBMPtr {
 }
 
 pub trait DBMAllocator: Send + Sync {
+    fn to_shared_fed(&self, fed: OwnedFederation) -> SharedFederation {
+        SharedFederation {
+            dim: fed.dim,
+            dbms: fed.dbms.into_iter().map(|dbm| self.to_ptr(dbm)).collect(),
+        }
+    }
     fn to_ptr(&self, dbm: DBM<Valid>) -> DBMPtr;
 }
 
@@ -154,7 +163,7 @@ mod test {
 
     use crate::{
         memory::allocator::{BaseDBMAllocator, BucketDBMAllocator, SharedDBMAllocator},
-        zones::DBM,
+        zones::{rand_gen::random_fed, ImmutableDBM, DBM},
     };
 
     use super::DBMAllocator;
@@ -183,7 +192,36 @@ mod test {
         for handle in handles {
             handle.join().unwrap();
         }
+    }
 
-        println!("Done!");
+    const TEST_ATTEMPTS: usize = 25;
+    const TEST_SIZE: usize = 10;
+    const DIMS: &[usize] = &[1, 2, 5];
+
+    #[test]
+    fn test_fed_alloc() {
+        let mut rng = rand::thread_rng();
+
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let alloc = BucketDBMAllocator::init(5);
+                    let mut handles = vec![];
+                    for _ in 0..10 {
+                        let alloc = Arc::clone(&alloc);
+                        let handle = thread::spawn(move || {
+                            let fed = random_fed(dim, size);
+                            let shared_fed = alloc.to_shared_fed(fed.clone());
+
+                            assert!(fed.equals(&shared_fed));
+
+                            let fed = fed.up();
+                            assert!(fed.superset_eq(&shared_fed));
+                        });
+                        handles.push(handle);
+                    }
+                }
+            }
+        }
     }
 }

@@ -1,5 +1,3 @@
-use super::constraints::bound_constants::INFINITY;
-
 #[derive(Clone, Debug)]
 pub struct Bounds {
     upper: Vec<Option<i32>>,
