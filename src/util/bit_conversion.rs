@@ -2,17 +2,22 @@ use std::fmt::Display;
 
 use super::constraints::ClockIndex;
 
-pub const fn u32s_to_represent_bits(bits: usize) -> usize {
-    ((bits) + 31) >> 5
+const BITS: usize = usize::BITS as usize;
+
+const fn len_to_represent_bits(bits: usize) -> usize {
+    1 + bits / BITS
+    //((bits) + 31) >> 5
 }
 
-pub const fn u32s_to_represent_bytes(bytes: usize) -> usize {
-    ((bytes) + 3) >> 2
+#[allow(dead_code)]
+const fn len_to_represent_bytes(bytes: usize) -> usize {
+    len_to_represent_bits(bytes * 8)
+    //((bytes) + 3) >> 2
 }
 
 #[derive(Clone)]
 pub struct BitField {
-    u32s: Vec<u32>,
+    nums: Vec<usize>,
     bit_len: usize,
 }
 
@@ -22,56 +27,55 @@ impl BitField {
     }
 
     pub fn zeros(bits: usize) -> BitField {
-        let len = u32s_to_represent_bits(bits);
+        let len = len_to_represent_bits(bits);
         BitField {
-            u32s: vec![0; len],
+            nums: vec![0; len],
             bit_len: bits,
         }
     }
 
     pub fn ones(bits: usize) -> BitField {
-        let len = u32s_to_represent_bits(bits);
+        let len = len_to_represent_bits(bits);
         BitField {
-            u32s: vec![u32::MAX; len],
+            nums: vec![usize::MAX; len],
             bit_len: bits,
         }
     }
 
     pub fn index(bit: usize) -> (usize, usize) {
-        (bit / 32, bit % 32)
+        (bit / BITS, bit % BITS)
     }
 
     pub fn unset(&mut self, bit: usize) {
         assert!(bit < self.bit_len);
         let (index, indent) = BitField::index(bit);
 
-        self.u32s[index] &= !(1 << indent)
+        self.nums[index] &= !(1 << indent)
     }
 
     pub fn set(&mut self, bit: usize) {
         assert!(bit < self.bit_len);
         let (index, indent) = BitField::index(bit);
-
-        self.u32s[index] |= 1 << indent
+        self.nums[index] |= 1 << indent
     }
 
     pub fn toggle(&mut self, bit: usize) {
         assert!(bit < self.bit_len);
         let (index, indent) = BitField::index(bit);
 
-        self.u32s[index] ^= 1 << indent
+        self.nums[index] ^= 1 << indent
     }
 
     pub fn get(&self, bit: usize) -> bool {
         assert!(bit < self.bit_len);
         let (index, indent) = BitField::index(bit);
-        (self.u32s[index] >> indent) & 1 == 1
+        (self.nums[index] >> indent) & 1 == 1
     }
 
     pub fn get_b(&self, bit: usize) -> u32 {
         assert!(bit < self.bit_len);
         let (index, indent) = BitField::index(bit);
-        (self.u32s[index] >> indent) & 1
+        ((self.nums[index] >> indent) & 1) as u32
     }
 
     pub fn get_negated_b(&self, bit: usize) -> u32 {
@@ -90,7 +94,7 @@ impl BitField {
     }
 
     pub fn is_empty(&self) -> bool {
-        for &i in &self.u32s {
+        for &i in &self.nums {
             if i != 0 {
                 return false;
             }
@@ -103,9 +107,9 @@ impl BitField {
         let mut res: Vec<usize> = Vec::with_capacity(n_cons);
         let mut index = 0;
         let mut found = 0;
-        for &u in &self.u32s {
+        for &u in &self.nums {
             if u != 0 {
-                for _ in 0..32 {
+                for _ in 0..BITS {
                     if self.get(index) {
                         res.push(index);
                         found += 1;
@@ -121,7 +125,7 @@ impl BitField {
                     }
                 }
             } else {
-                index += 32;
+                index += BITS;
             }
         }
 
@@ -129,14 +133,15 @@ impl BitField {
     }
 
     pub fn get_ijs(&self, dim: ClockIndex, n_cons: usize) -> Vec<(usize, usize)> {
+        assert!(dim > 0);
         let mut ijs = Vec::with_capacity(n_cons);
         let mut found = 0;
         let mut i = 0usize;
         let mut j = 0usize;
-        for &u in &self.u32s {
+        for &u in &self.nums {
             let mut b = u;
             if b != 0 {
-                for _ in 0..32 {
+                for _ in 0..BITS {
                     if (b & 1) == 1 {
                         while j >= dim {
                             j -= dim;
@@ -153,8 +158,50 @@ impl BitField {
                     b >>= 1;
                 }
             } else {
-                j += 32;
+                j += BITS;
             }
+        }
+
+        ijs
+    }
+
+    pub fn sparse_get_ijs(&self, dim: ClockIndex, n_cons: usize) -> Vec<(usize, usize)> {
+        assert!(dim > 0);
+        let mut ijs = Vec::with_capacity(n_cons);
+        let mut found = 0;
+        let mut i = 0usize;
+        let mut j = 0usize;
+        for &u in &self.nums {
+            let mut b = u;
+            let mut visited = 0;
+            while b != 0 {
+                let bit_index = b.trailing_zeros() as usize;
+                if bit_index != BITS - 1 {
+                    b >>= bit_index + 1;
+                } else {
+                    b = 0;
+                }
+
+                j += bit_index;
+                visited += bit_index + 1;
+
+                while j >= dim {
+                    j -= dim;
+                    i += 1;
+                }
+
+                ijs.push((i, j));
+
+                found += 1;
+
+                if found == n_cons {
+                    return ijs;
+                }
+                j += 1;
+            }
+
+            // add remainder
+            j += BITS - visited;
         }
 
         ijs
@@ -180,6 +227,8 @@ impl Display for BitField {
 
 #[allow(unused)]
 mod test {
+    use crate::util::bit_conversion::BITS;
+
     use super::BitField;
 
     #[test]
@@ -198,10 +247,10 @@ mod test {
 
     #[test]
     fn index() {
-        assert_eq!(BitField::index(32), (1, 0));
+        assert_eq!(BitField::index(BITS), (1, 0));
         assert_eq!(BitField::index(0), (0, 0));
         assert_eq!(BitField::index(1), (0, 1));
-        assert_eq!(BitField::index(33), (1, 1));
+        assert_eq!(BitField::index(BITS + 1), (1, 1));
     }
 
     #[test]
@@ -233,5 +282,43 @@ mod test {
         assert_eq!(ijs[1], (0, 5));
         assert_eq!(ijs[2], (5, 0));
         assert_eq!(ijs[3], (7, 7));
+    }
+
+    #[test]
+    fn new_ijs() {
+        let dim = 8;
+        let mut field = BitField::zeros(dim * dim);
+        field.set(2);
+        field.set(5);
+        field.set(40);
+        field.set(63);
+
+        let ijs = field.sparse_get_ijs(dim, 4);
+
+        assert_eq!(ijs[0], (0, 2));
+        assert_eq!(ijs[1], (0, 5));
+        assert_eq!(ijs[2], (5, 0));
+        assert_eq!(ijs[3], (7, 7));
+    }
+
+    #[test]
+    fn new_equals_old_ijs() {
+        for size in [10, 100, 1000] {
+            for dim in 1..100 {
+                assert_eq!(
+                    BitField::ones(size).get_ijs(dim, size),
+                    BitField::ones(size).sparse_get_ijs(dim, size)
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn limit_test() {
+        let mut field = BitField::zeros(100);
+        field.set(BITS - 1);
+        assert_eq!(field.nums[0].trailing_zeros() as usize, BITS - 1);
+        //assert_eq!(field.nums[0] >> 64, 0);
+        assert_eq!(field.get_ijs(8, 1), field.sparse_get_ijs(8, 1))
     }
 }

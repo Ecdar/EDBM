@@ -1187,7 +1187,6 @@ impl<T: DBMState> Display for DBM<T> {
 #[allow(unused)]
 mod test {
     use super::DBM;
-    use crate::util::bit_conversion::{u32s_to_represent_bits, u32s_to_represent_bytes};
     use crate::zones::rand_gen::random_dbm;
     use crate::zones::DBMRelation;
 
@@ -1369,22 +1368,6 @@ mod test {
         assert!(five.equals(&five));
         assert_eq!(zero.relation_to(&five), DBMRelation::Different);
         assert_eq!(five.relation_to(&zero), DBMRelation::Different);
-    }
-
-    #[test]
-    fn bits_to_ints() {
-        assert_eq!(u32s_to_represent_bits(1), 1);
-        assert_eq!(u32s_to_represent_bits(32), 1);
-        assert_eq!(u32s_to_represent_bits(33), 2);
-        assert_eq!(u32s_to_represent_bits(65), 3);
-    }
-
-    #[test]
-    fn bytes_to_ints() {
-        assert_eq!(u32s_to_represent_bytes(1), 1);
-        assert_eq!(u32s_to_represent_bytes(4), 1);
-        assert_eq!(u32s_to_represent_bytes(5), 2);
-        assert_eq!(u32s_to_represent_bytes(9), 3);
     }
 
     const TEST_ATTEMPTS: usize = 1000;
