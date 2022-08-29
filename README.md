@@ -7,10 +7,10 @@ EDBM is based on the main features from [UDBM](https://github.com/UPPAALModelChe
 - Type state usage protocol to ensure that DBMs are valid (non-empty and closed/in canonical form) when necessary and disallowing unnecessary close operations.
 
 ## Using EDBM
-[EDBM is available on crates.io](...). The recommended way to use it is to add a dependency to your `Cargo.toml`:
+[EDBM is (soon) available on crates.io](...). The recommended way to use it is to add a dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
-edbm = "0.1.0"
+edbm = ...
 ```
 
 ### Performance Optimization
