@@ -963,6 +963,7 @@ impl DBM<Unsafe> {
     }
 
     // Based on the UDBM implementation
+    #[cfg(feature = "expensive_asserts")]
     fn is_diagonal_ok_and_clocks_positive(&self) -> bool {
         for i in 0..self.dim {
             if self[(i, i)] > LE_ZERO {
