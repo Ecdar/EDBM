@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use crate::zones::{ImmutableDBM, OwnedFederation, SharedFederation, Valid, DBM};
+use crate::zones::{ImmutableDBM, OwnedFederation, SharedFederation, Valid, DBM, Federation};
 
 type HashType = u64;
 
@@ -42,6 +42,17 @@ impl ImmutableDBM for DBMPtr {
     #[inline(always)]
     fn as_valid_ref(&self) -> &DBM<Valid> {
         self.arc.as_ref()
+    }
+
+    fn owned_fed_clone(fed: &Federation<Self>) -> OwnedFederation {
+        Federation {
+            dim: fed.dim,
+            dbms: fed
+                .dbms
+                .iter()
+                .map(|dbm| dbm.as_valid_ref().clone())
+                .collect(),
+        }
     }
 }
 

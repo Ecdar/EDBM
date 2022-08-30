@@ -2,7 +2,6 @@ use std::{
     collections::hash_map::DefaultHasher,
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
-    vec,
 };
 
 use crate::{
@@ -20,16 +19,25 @@ use crate::{
 };
 use std::hash::{Hash, Hasher};
 
-use super::minimal_graph::{get_dbm_bit_matrix, BitMatrix};
+use super::{
+    minimal_graph::{get_dbm_bit_matrix, BitMatrix},
+    Federation, OwnedFederation,
+};
 
-pub trait ImmutableDBM {
+pub trait ImmutableDBM: Sized {
     fn as_valid_ref(&self) -> &DBM<Valid>;
+    fn owned_fed_clone(fed: &Federation<Self>) -> OwnedFederation;
 }
 
 impl ImmutableDBM for DBM<Valid> {
     #[inline(always)]
     fn as_valid_ref(&self) -> &DBM<Valid> {
         self
+    }
+
+    #[inline(always)]
+    fn owned_fed_clone(fed: &Federation<Self>) -> OwnedFederation {
+        fed.clone()
     }
 }
 

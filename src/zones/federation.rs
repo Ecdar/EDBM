@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, ops::Add};
 
 use crate::{
     memory::allocator::{DBMAllocator, DBMPtr},
@@ -30,14 +30,7 @@ where
 
 impl<T: ImmutableDBM> Federation<T> {
     pub fn owned_clone(&self) -> OwnedFederation {
-        Federation {
-            dim: self.dim,
-            dbms: self
-                .dbms
-                .iter()
-                .map(|dbm| dbm.as_valid_ref().clone())
-                .collect(),
-        }
+        T::owned_fed_clone(self)
     }
 
     pub fn empty(dim: ClockIndex) -> Self {
@@ -261,7 +254,7 @@ impl OwnedFederation {
     }
 
     pub fn dbm_intersection(mut self, dbm2: &DBM<Valid>) -> Self {
-        let mut res = vec![];
+        let mut res = Vec::with_capacity(self.size());
         for dbm1 in self.dbms {
             if let Some(intersection) = dbm1.intersection(dbm2) {
                 res.push(intersection);
@@ -687,6 +680,24 @@ impl OwnedFederation {
             dbms: self.dbms.into_iter().map(|dbm| alloc.to_ptr(dbm)).collect(),
             dim: self.dim,
         }
+    }
+}
+
+impl Add for OwnedFederation {
+    type Output = Self;
+
+    fn add(mut self, other: Self) -> Self {
+        if self.is_empty() {
+            return other;
+        }
+
+        for dbm in other.dbms {
+            if self.remove_included_in_dbm(&dbm) {
+                self.append_dbm(dbm);
+            }
+        }
+
+        self
     }
 }
 

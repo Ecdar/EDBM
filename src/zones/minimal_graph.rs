@@ -29,7 +29,7 @@ fn analyze_for_min_dbm<T: DBMState>(dbm: &DBM<T>) -> BitMatrix {
 
     let mut n_bcons = 0;
 
-    let mut end = vec![];
+    let mut end = Vec::with_capacity(dim);
 
     for i in 0..dim {
         if next[i] == 0 {

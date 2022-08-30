@@ -37,27 +37,18 @@ pub fn worst_value(
 }
 
 pub fn dbm_list_union(mut left: Vec<DBM<Valid>>, mut right: Vec<DBM<Valid>>) -> Vec<DBM<Valid>> {
-    let mut max_i = left.len();
-    let mut max_j = right.len();
     let mut i = 0;
 
-    'i: while i < max_i {
+    'i: while i < left.len() {  
         let mut j = 0;
-        while j < max_j {
+        while j < right.len() {
             match left[i].relation_to(&right[j]) {
-                super::DBMRelation::Equal => {
+                super::DBMRelation::Equal | super::DBMRelation::Subset => {
                     left.swap_remove(i);
-                    max_i -= 1;
-                    continue 'i;
-                }
-                super::DBMRelation::Subset => {
-                    left.swap_remove(i);
-                    max_i -= 1;
                     continue 'i;
                 }
                 super::DBMRelation::Superset => {
                     right.swap_remove(j);
-                    max_j -= 1;
                 }
                 super::DBMRelation::Different => j += 1,
             }
@@ -76,14 +67,11 @@ pub fn dbm_list_reduce(mut list: Vec<DBM<Valid>>) -> Vec<DBM<Valid>> {
         let mut j = i + 1;
         while j < list.len() {
             match list[i].relation_to(&list[j]) {
-                super::DBMRelation::Equal => {
+                super::DBMRelation::Equal | super::DBMRelation::Superset => {
                     list.swap_remove(j);
                 }
                 super::DBMRelation::Subset => {
                     list.swap_remove(i);
-                }
-                super::DBMRelation::Superset => {
-                    list.swap_remove(j);
                 }
                 super::DBMRelation::Different => j += 1,
             }
