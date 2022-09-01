@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     ops::Add,
 };
@@ -293,6 +294,27 @@ impl Inequality {
     pub fn is_inf(&self) -> bool {
         *self == Self::LS(INFINITY)
     }
+
+    pub fn is_strict(&self) -> bool {
+        match self {
+            Inequality::LS(_) => true,
+            Inequality::LE(_) => false,
+        }
+    }
+
+    pub fn negated_bound(self) -> Self {
+        match self {
+            Inequality::LS(bound) => Inequality::LE(-bound),
+            Inequality::LE(bound) => Inequality::LS(-bound),
+        }
+    }
+
+    pub fn strictness_str(&self) -> &'static str {
+        match self {
+            Inequality::LS(_) => "<",
+            Inequality::LE(_) => "<=",
+        }
+    }
 }
 
 impl Display for Inequality {
@@ -335,6 +357,30 @@ impl Conjunction {
     pub fn iter(&self) -> impl Iterator<Item = &Constraint> {
         self.constraints.iter()
     }
+
+    pub fn to_string_with_naming(&self, naming: Option<&HashMap<ClockIndex, String>>) -> String {
+        if self.constraints.is_empty() {
+            "true".to_string()
+        } else {
+            let mut first = true;
+            let mut result = String::new();
+            for constraint in &self.constraints {
+                if first {
+                    first = false;
+                } else {
+                    result.push_str(" && ");
+                }
+                result.push_str(&constraint.to_string_with_naming(naming));
+            }
+            result
+        }
+    }
+}
+
+impl Display for Conjunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string_with_naming(None))
+    }
 }
 
 pub struct Disjunction {
@@ -353,13 +399,39 @@ impl Disjunction {
     pub fn iter(&self) -> impl Iterator<Item = &Conjunction> {
         self.conjunctions.iter()
     }
+
+    pub fn to_string_with_naming(&self, naming: Option<&HashMap<ClockIndex, String>>) -> String {
+        if self.conjunctions.is_empty() {
+            "false".to_string()
+        } else if self.conjunctions.len() == 1 {
+            self.conjunctions[0].to_string_with_naming(naming)
+        } else {
+            let mut first = true;
+            let mut result = String::new();
+            for conjunction in &self.conjunctions {
+                if first {
+                    first = false;
+                } else {
+                    result.push_str(" || ");
+                }
+                result.push_str(&format!("({})", conjunction.to_string_with_naming(naming)));
+            }
+            result
+        }
+    }
+}
+
+impl Display for Disjunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string_with_naming(None))
+    }
 }
 
 /// Represents a constraint of the form `i-j ≤/< c`. Where `raw_ineq` represents c and the strictness
 pub struct Constraint {
     pub i: ClockIndex,
     pub j: ClockIndex,
-    pub raw_ineq: RawInequality,
+    pub(crate) raw_ineq: RawInequality,
 }
 
 impl Constraint {
@@ -373,5 +445,46 @@ impl Constraint {
 
     pub fn ineq(&self) -> Inequality {
         self.raw_ineq.into()
+    }
+
+    pub fn to_string_with_naming(&self, naming: Option<&HashMap<ClockIndex, String>>) -> String {
+        assert!(!self.raw_ineq.is_inf());
+        let ineq = self.ineq();
+        if self.j == 0 {
+            assert_ne!(self.i, 0);
+            let i_name = naming
+                .and_then(|naming| naming.get(&self.i).cloned())
+                .unwrap_or(format!("c:{}", self.i));
+            format!("{}{}", i_name, ineq)
+        } else if self.i == 0 {
+            let j_name = naming
+                .and_then(|naming| naming.get(&self.j).cloned())
+                .unwrap_or(format!("c:{}", self.j));
+            let bound = -ineq.bound();
+            let op = ineq.strictness_str();
+
+            // 0-j <= c -> -j <= c -> -j-c <= 0 -> -c <= j
+
+            format!("{bound}{op}{j_name}")
+        } else {
+            let i_name = naming
+                .and_then(|naming| naming.get(&self.i).cloned())
+                .unwrap_or(format!("c:{}", self.i));
+            let j_name = naming
+                .and_then(|naming| naming.get(&self.j).cloned())
+                .unwrap_or(format!("c:{}", self.j));
+
+            if ineq.bound() == 0 {
+                format!("{}{}{}", i_name, ineq.strictness_str(), j_name)
+            } else {
+                format!("{}-{}{}", i_name, j_name, ineq)
+            }
+        }
+    }
+}
+
+impl Display for Constraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_string_with_naming(None))
     }
 }

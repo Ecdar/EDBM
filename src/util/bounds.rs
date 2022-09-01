@@ -15,7 +15,15 @@ impl Bounds {
         }
     }
 
-    pub fn get_dim(&self) -> usize {
+    pub fn add_bounds(&mut self, other: &Bounds) {
+        assert_eq!(self.dim(), other.dim());
+        for clock in 1..self.upper.len() {
+            self.lower[clock] = self.lower[clock].max(other.lower[clock]);
+            self.upper[clock] = self.upper[clock].max(other.upper[clock]);
+        }
+    }
+
+    pub fn dim(&self) -> usize {
         self.upper.len()
     }
 
@@ -49,7 +57,7 @@ impl Bounds {
 
     #[allow(dead_code)]
     pub(crate) fn set_to_maxes(mut self) -> Self {
-        for i in 1..self.get_dim() {
+        for i in 1..self.dim() {
             let max = self.get_max(i);
             self.lower[i] = max;
             self.upper[i] = max;

@@ -1,4 +1,7 @@
-use std::{fmt::Display, ops::Add};
+use std::{
+    fmt::{Debug, Display},
+    ops::{Add, AddAssign, Not},
+};
 
 use crate::{
     memory::allocator::{DBMAllocator, DBMPtr},
@@ -24,13 +27,23 @@ pub struct Federation<T>
 where
     T: ImmutableDBM,
 {
-    pub dim: ClockIndex,
+    pub(crate) dim: ClockIndex,
     pub(crate) dbms: Vec<T>,
 }
 
 impl<T: ImmutableDBM> Federation<T> {
     pub fn owned_clone(&self) -> OwnedFederation {
         T::owned_fed_clone(self)
+    }
+
+    pub fn dim(&self) -> ClockIndex {
+        self.dim
+    }
+
+    pub fn can_delay_indefinitely(&self) -> bool {
+        self.dbms
+            .iter()
+            .any(|dbm| dbm.as_valid_ref().can_delay_indefinitely())
     }
 
     pub fn empty(dim: ClockIndex) -> Self {
@@ -40,6 +53,12 @@ impl<T: ImmutableDBM> Federation<T> {
     pub fn is_empty(&self) -> bool {
         self.dbms.is_empty()
     }
+
+    pub fn is_universe(&self) -> bool {
+        let uni = OwnedFederation::universe(self.dim);
+        uni.subset_eq(self)
+    }
+
     pub fn size(&self) -> usize {
         self.dbms.len()
     }
@@ -67,6 +86,7 @@ impl<T: ImmutableDBM> Federation<T> {
     }
 
     fn is_subtraction_empty<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        assert_eq!(self.dim, other.dim);
         if self.is_empty() {
             return true;
         } else if other.is_empty() {
@@ -78,7 +98,7 @@ impl<T: ImmutableDBM> Federation<T> {
         } else if other.size() == 1 {
             false // If it is the only DBM we know the result (!subset_eq)
         } else {
-            self.owned_clone().subtract(other).is_empty()
+            self.owned_clone().subtraction(other).is_empty()
         }
     }
 
@@ -104,8 +124,23 @@ impl<T: ImmutableDBM> Federation<T> {
         true
     }
 
+    pub fn has_intersection<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
+        assert_eq!(self.dim, other.dim);
+        if other.is_empty() {
+            return false;
+        }
+        for dbm1 in &self.dbms {
+            for dbm2 in &other.dbms {
+                if dbm1.as_valid_ref().has_intersection(dbm2.as_valid_ref()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn inverse(&self) -> OwnedFederation {
-        OwnedFederation::universe(self.dim).subtract(self)
+        OwnedFederation::universe(self.dim).subtraction(self)
     }
 
     pub fn superset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
@@ -131,7 +166,7 @@ impl<T: ImmutableDBM> Federation<T> {
         }
     }
 
-    pub fn disjunction_of_minimal_constraints(&self) -> Disjunction {
+    pub fn minimal_constraints(&self) -> Disjunction {
         let fed = self.owned_clone().merge_expensive_reduce(0);
         let mut conjunctions = Vec::with_capacity(self.size());
         for dbm in &fed.dbms {
@@ -298,6 +333,7 @@ impl OwnedFederation {
         self.merge_reduce(size)
     }
 
+    #[must_use]
     pub fn predt(&self, bads: &Self) -> Self {
         let goods = self;
         if bads.is_empty() {
@@ -318,20 +354,20 @@ impl OwnedFederation {
 
             let mut intersect_predt = Self::from_dbm(down_good.clone());
 
-            if down_good.intersects(bad) {
+            if down_good.has_intersection(bad) {
                 let down_bad = Self::from_dbm(bad.clone().down());
                 intersect_predt = intersect_predt
-                    .subtract(&down_bad)
+                    .subtraction(&down_bad)
                     .steal(down_bad.dbm_intersection(good).subtract_dbm(bad).down());
             }
 
             // Intersection with other predt
             for bad in &bads.dbms[1..] {
-                if down_good.intersects(bad) {
+                if down_good.has_intersection(bad) {
                     let down_bad = Self::from_dbm(bad.clone().down());
 
                     let part = Self::from_dbm(down_good.clone())
-                        .subtract(&down_bad)
+                        .subtraction(&down_bad)
                         .steal(down_bad.dbm_intersection(good).subtract_dbm(bad).down());
 
                     intersect_predt = intersect_predt.intersection(&part);
@@ -652,7 +688,7 @@ impl OwnedFederation {
         other_not_included
     }
 
-    pub fn subtract<D: ImmutableDBM>(self, other: &Federation<D>) -> Self {
+    pub fn subtraction<D: ImmutableDBM>(self, other: &Federation<D>) -> Self {
         let mut res = self;
 
         if let Some(dbm) = other.try_get_only_dbm() {
@@ -701,14 +737,36 @@ impl Add for OwnedFederation {
     }
 }
 
-impl Display for OwnedFederation {
+impl AddAssign for OwnedFederation {
+    fn add_assign(&mut self, other: Self) {
+        *self = other.union(self);
+    }
+}
+
+impl Not for OwnedFederation {
+    type Output = Self;
+
+    /// Get a federation containing the inverse of the federation
+    fn not(self) -> Self {
+        self.inverse()
+    }
+}
+
+impl<D: ImmutableDBM> Display for Federation<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.minimal_constraints().fmt(f)
+    }
+}
+
+impl<D: ImmutableDBM> Debug for Federation<D> {
+    // Same as Display
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Federation{{")?;
         for (i, dbm) in self.dbms.iter().enumerate() {
             writeln!(
                 f,
                 "{}",
-                format!("  DBM {}:\n{}", i + 1, dbm)
+                format!("  DBM {}:\n{}", i + 1, dbm.as_valid_ref())
                     .strip_suffix('\n')
                     .unwrap()
                     .replace('\n', "\n    ")
@@ -827,7 +885,7 @@ mod test {
                     let fed = random_fed(dim, size);
 
                     let inverse = fed.clone().inverse();
-                    let fed2 = fed.clone().subtract(&inverse);
+                    let fed2 = fed.clone().subtraction(&inverse);
 
                     assert!(fed.equals(&fed2));
                 }
@@ -935,7 +993,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -962,7 +1021,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -995,7 +1055,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -1028,7 +1089,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -1061,7 +1123,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -1095,7 +1158,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -1131,7 +1195,8 @@ mod test {
                     let fed2 = fed2.merge_expensive_reduce(0);
                     assert!(fed1.equals(&fed2) && fed2.equals(&fed1));
                     assert!(
-                        fed1.clone().subtract(&fed2).is_empty() && fed2.subtract(&fed1).is_empty()
+                        fed1.clone().subtraction(&fed2).is_empty()
+                            && fed2.subtraction(&fed1).is_empty()
                     );
                 }
             }
@@ -1169,13 +1234,13 @@ mod test {
                     let fed4 = fed1.clone().intersection(&fed2);
                     // assert(fed4.le(fed1) && fed4.le(fed2));
                     assert!(fed4.subset_eq(&fed1) && fed4.subset_eq(&fed2));
-                    assert!(fed4.clone().subtract(&fed1).is_empty());
-                    assert!(fed4.clone().subtract(&fed2).is_empty());
-                    let s12 = fed1.clone().subtract(&fed2);
-                    let s14 = fed1.clone().subtract(&fed4);
+                    assert!(fed4.clone().subtraction(&fed1).is_empty());
+                    assert!(fed4.clone().subtraction(&fed2).is_empty());
+                    let s12 = fed1.clone().subtraction(&fed2);
+                    let s14 = fed1.clone().subtraction(&fed4);
                     assert!(s12.equals(&s14));
-                    let s21 = fed2.clone().subtract(&fed1);
-                    let s24 = fed2.clone().subtract(&fed4);
+                    let s21 = fed2.clone().subtraction(&fed1);
+                    let s24 = fed2.clone().subtraction(&fed4);
                     assert!(s21.equals(&s24));
                     let u1 = fed1.clone().union(&fed2);
                     let u2 = s12.clone().union(&s21).union(&fed4);
@@ -1187,7 +1252,7 @@ mod test {
                     drop(u1);
                     drop(u2);
 
-                    let fed1 = fed1.subtract(&fed2);
+                    let fed1 = fed1.subtraction(&fed2);
 
                     for dbm in &fed2.dbms {
                         fed3 = fed3.subtract_dbm(dbm);
@@ -1212,7 +1277,7 @@ mod test {
                     assert!(p.clone().intersection(&bad).is_empty());
                     assert!(good.subset_eq(&bad) || !(p.clone().intersection(&good)).is_empty());
                     let good_down = good.down();
-                    assert!(p.subset_eq(&good_down.clone().subtract(&bad)));
+                    assert!(p.subset_eq(&good_down.clone().subtraction(&bad)));
                     assert!(!bad.is_empty() || p.equals(&good_down));
                 }
             }
@@ -1272,7 +1337,7 @@ mod test {
             for _ in 0..TEST_ATTEMPTS {
                 for size in 1..TEST_SIZE {
                     let fed1 = random_fed(dim, size);
-                    let disj = fed1.disjunction_of_minimal_constraints();
+                    let disj = fed1.minimal_constraints();
                     let fed2 = OwnedFederation::from_disjunction(&disj, dim);
 
                     assert!(fed1.equals(&fed2));

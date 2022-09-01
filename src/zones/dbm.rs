@@ -163,6 +163,16 @@ impl DBM<Valid> {
         self.state.hash.unwrap_or_else(|| self.calculate_hash())
     }
 
+    pub fn can_delay_indefinitely(&self) -> bool {
+        for i in 1..self.dim {
+            if self[(i, 0)] < LS_INFINITY {
+                return false;
+            }
+        }
+
+        true
+    }
+
     fn calculate_hash(&mut self) -> u64 {
         let mut s = DefaultHasher::new();
 
@@ -427,7 +437,7 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
-    pub fn intersects(&self, dbm2: &Self) -> bool {
+    pub fn has_intersection(&self, dbm2: &Self) -> bool {
         self.maybe_intersects(dbm2) && self.clone().intersection(dbm2).is_some()
     }
 
@@ -1230,7 +1240,7 @@ mod test {
         let dbm = DBM::new(10, LE(0));
         let dbm = dbm.close().unwrap();
 
-        assert!(dbm.intersects(&dbm));
+        assert!(dbm.has_intersection(&dbm));
     }
 
     #[test]
@@ -1245,7 +1255,7 @@ mod test {
         let dbm = dbm.up();
         println!("After: \n{}", dbm);
 
-        assert!(old.intersects(&dbm));
+        assert!(old.has_intersection(&dbm));
     }
 
     #[test]
@@ -1261,7 +1271,7 @@ mod test {
 
         println!("After: \n{}", dbm);
 
-        assert!(original.intersects(&dbm));
+        assert!(original.has_intersection(&dbm));
     }
 
     #[test]
@@ -1280,10 +1290,10 @@ mod test {
                 let dbm2 = dbm2.constrain_and_close(0, 1, LS(-i))?; // Lower bound
                 let dbm3 = dbm3.constrain_and_close(1, 0, LE(i + 1))?; // Upper bound
 
-                assert!(!dbm1.intersects(&dbm2));
+                assert!(!dbm1.has_intersection(&dbm2));
 
-                assert!(dbm1.intersects(&dbm3));
-                assert!(dbm2.intersects(&dbm3));
+                assert!(dbm1.has_intersection(&dbm3));
+                assert!(dbm2.has_intersection(&dbm3));
             }
 
             Some(())
