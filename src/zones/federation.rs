@@ -848,7 +848,7 @@ impl OwnedFederation {
         other_not_included
     }
 
-    /// Returns the subtraction `other` from `self`.
+    /// Returns the subtraction of `other` from `self`.
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
     pub fn subtraction<D: ImmutableDBM>(self, other: &Federation<D>) -> Self {
