@@ -36,33 +36,44 @@ impl<T: ImmutableDBM> Federation<T> {
         T::owned_fed_clone(self)
     }
 
+    /// Returns the dimension of the federation (i.e. the number of `clocks + 1`)
     pub fn dim(&self) -> ClockIndex {
         self.dim
     }
 
+    /// Returns whether the federation can delay indefinitely.
+    ///
+    /// Same as `Federation::is_unbounded`.
     pub fn can_delay_indefinitely(&self) -> bool {
         self.dbms
             .iter()
             .any(|dbm| dbm.as_valid_ref().can_delay_indefinitely())
     }
 
+    /// Returns an empty federation with `dim - 1` clocks.
     pub fn empty(dim: ClockIndex) -> Self {
         Self { dim, dbms: vec![] }
     }
 
+    /// Returns whether the federation is empty.
     pub fn is_empty(&self) -> bool {
         self.dbms.is_empty()
     }
 
+    /// Returns whether the federation has no constraints on clocks.
     pub fn is_universe(&self) -> bool {
         let uni = OwnedFederation::universe(self.dim);
         uni.subset_eq(self)
     }
 
+    /// Returns the number of DBMs in the federation.
     pub fn size(&self) -> usize {
         self.dbms.len()
     }
 
+    /// Returns whether the federation can delay indefinitely.
+    ///
+    /// Same as `Federation::can_delay_indefinitely`.
     pub fn is_unbounded(&self) -> bool {
         for dbm in &self.dbms {
             if dbm.as_valid_ref().is_unbounded() {
@@ -73,6 +84,7 @@ impl<T: ImmutableDBM> Federation<T> {
         false
     }
 
+    /// Get the first DBM in the federation if the federation only has one DBM.
     fn try_get_only_dbm(&self) -> Option<&T> {
         if self.dbms.len() == 1 {
             return self.dbms.first();
@@ -80,11 +92,20 @@ impl<T: ImmutableDBM> Federation<T> {
         None
     }
 
+    /// Get the first DBM in the federation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the federation is empty.
     fn first_dbm(&self) -> &T {
         assert!(!self.is_empty());
         self.dbms.first().unwrap()
     }
 
+    /// Returns whether the subtraction of `other` from `self` is empty.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     fn is_subtraction_empty<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         assert_eq!(self.dim, other.dim);
         if self.is_empty() {
@@ -102,14 +123,26 @@ impl<T: ImmutableDBM> Federation<T> {
         }
     }
 
+    /// Returns whether `self` is a subset of `other`.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn subset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         self.is_subtraction_empty(other)
     }
 
+    /// Returns whether `self` is a superset of `other`.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn superset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         other.is_subtraction_empty(self)
     }
 
+    /// Returns whether `self` is a subset of the DBM `other`.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn subset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
         if self.is_empty() {
             return true;
@@ -124,6 +157,10 @@ impl<T: ImmutableDBM> Federation<T> {
         true
     }
 
+    /// Returns whether the intersection between `self` and `other` is non-empty.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn has_intersection<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         assert_eq!(self.dim, other.dim);
         if other.is_empty() {
@@ -139,20 +176,32 @@ impl<T: ImmutableDBM> Federation<T> {
         false
     }
 
+    /// Returns the inverse of self.
     pub fn inverse(&self) -> OwnedFederation {
         OwnedFederation::universe(self.dim).subtraction(self)
     }
 
+    /// Returns whether `self` is a superset of the DBM `other`.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn superset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
         let other = OwnedFederation::from_dbm(other.as_valid_ref().clone());
         self.superset_eq(&other)
     }
 
+    /// Returns whether `self` is equal to `other` (subset and superset).
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn equals<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         self.relation(other) == DBMRelation::Equal
     }
 
-    /// This is always exact (as opposed to UDBM which has an exact and inexact variant)
+    /// Returns the exact relation between `self` and `other`.
+    ///
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn relation<D: ImmutableDBM>(&self, other: &Federation<D>) -> DBMRelation {
         use DBMRelation::*;
         let self_included = self.is_subtraction_empty(other);
@@ -166,6 +215,7 @@ impl<T: ImmutableDBM> Federation<T> {
         }
     }
 
+    /// Returns the federation as a minimal disjunction of conjunctions of constraints.
     pub fn minimal_constraints(&self) -> Disjunction {
         let fed = self.owned_clone().merge_expensive_reduce(0);
         let mut conjunctions = Vec::with_capacity(self.size());
@@ -179,6 +229,7 @@ impl<T: ImmutableDBM> Federation<T> {
 }
 
 impl OwnedFederation {
+    /// Constructs a federation from a `Disjunction` and dimension.
     pub fn from_disjunction(disjunction: &Disjunction, dim: ClockIndex) -> Self {
         let mut fed = Federation::empty(dim);
         for conj in disjunction.iter() {
@@ -189,31 +240,45 @@ impl OwnedFederation {
         fed
     }
 
-    /// Constrains the federation DBMs with `dbm[i,j]=constraint`.
+    /// Constrains the federation with the raw constraint `dbm[i,j]=constraint`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn constrain_raw(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
         self.filter_map_all(|dbm| dbm.constrain_and_close_raw(i, j, constraint))
     }
 
-    /// Constrains the federation DBMs with `dbm[i,j]=constraint`.
+    /// Constrains the federation with `clocks[i]-clocks[j] <?= constraint` where `clocks[0]=0`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn constrain(self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> Self {
         self.filter_map_all(|dbm| dbm.constrain_and_close(i, j, constraint))
     }
 
-    /// Constrains the federation DBMs such that `bound<=clock<=bound` e.g. `clock=bound`.
+    /// Constrains the federation DBMs such that `bound<=clock<=bound` e.g. `clock==bound`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn constrain_eq(self, clock: ClockIndex, bound: Bound) -> Self {
         use Inequality::*;
         self.constrain(clock, 0, LE(bound)) // Lower bound
             .constrain(0, clock, LE(-bound)) // Upper bound
     }
 
-    /// Efficient method to apply multiple constraints at once, because the DBMs are only closed once at the end.
+    /// Efficient method to apply multiple raw constraints at once, because the DBMs are only closed once at the end.
+    /// ///
+    /// For application of a single constraint use `constrain_raw` instead.
+    /// # Panics
+    ///
+    /// Panics if any `i` or `j` is out of bounds.
     pub fn constrain_raw_many(
         self,
-        constraints: Vec<(ClockIndex, ClockIndex, RawInequality)>,
+        constraints: &[(ClockIndex, ClockIndex, RawInequality)],
     ) -> Self {
         self.filter_map_all_dirty(|dbm| {
             let mut res = Some(dbm);
-            for (i, j, constraint) in &constraints {
+            for (i, j, constraint) in constraints {
                 res = res?.constrain_raw(*i, *j, *constraint);
             }
 
@@ -222,10 +287,15 @@ impl OwnedFederation {
     }
 
     /// Efficient method to apply multiple constraints at once, because the DBMs are only closed once at the end.
-    pub fn constrain_many(self, constraints: Vec<(ClockIndex, ClockIndex, Inequality)>) -> Self {
+    ///
+    /// For application of a single constraint use `constrain` instead.
+    /// # Panics
+    ///
+    /// Panics if any `i` or `j` is out of bounds.
+    pub fn constrain_many(self, constraints: &[(ClockIndex, ClockIndex, Inequality)]) -> Self {
         self.filter_map_all_dirty(|dbm| {
             let mut res = Some(dbm);
-            for (i, j, constraint) in &constraints {
+            for (i, j, constraint) in constraints {
                 res = res?.constrain(*i, *j, *constraint)
             }
 
@@ -233,61 +303,105 @@ impl OwnedFederation {
         })
     }
 
+    /// Same as `constrain_raw` but `self` must not satisfy the constraint already
+    ///
+    /// # Panics
+    /// Panics if self already satisfies the constraint or `i` or `j` are out of bounds.
     pub fn tighten(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
         self.map_all(|dbm| dbm.tighten(i, j, constraint))
     }
 
+    /// Let time pass 'upwards' for all clocks in `self`. The lower bounds remain and the upper bound of all clocks is set to the highest possible value allowed from the constraints (maximum of infinity).
     pub fn up(self) -> Self {
         self.map_all(|dbm| dbm.up())
     }
 
+    /// Let time pass 'downwards' for all clocks in `self`. The upper bounds remain and the lower bound of all clocks is set to the lowest possible value allowed from the constraints (minimum of 0).
     pub fn down(self) -> Self {
         self.map_all(|dbm| dbm.down())
     }
 
+    /// Returns whether the federation satisfies the constraint `clocks[i]-clocks[j] <?= constraint` where `clocks[0]=0`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn satisfies(&self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> bool {
         self.dbms.iter().any(|dbm| dbm.satisfies(i, j, constraint))
     }
 
+    /// Returns whether the federation satisfies the raw constraint `dbm[i,j]=constraint`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn satisfies_raw(&self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> bool {
         self.dbms
             .iter()
             .any(|dbm| dbm.satisfies_raw(i, j, constraint))
     }
 
+    /// Set the time value of the clock `clock` equal to `val`.
+    /// # Panics
+    ///
+    /// Panics if `clock` is out of bounds.
     pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
         self.map_all(|dbm| dbm.update_clock_val(clock, val))
     }
 
+    /// Set the time value of the clock `clock_i` equal to the time value(s) of `clock_j`.
+    /// # Panics
+    ///
+    /// Panics if `clock_i` or `clock_j` are out of bounds.
     pub fn update_clock_clock(self, clock_i: ClockIndex, clock_j: ClockIndex) -> Self {
         self.map_all(|dbm| dbm.update_clock_clock(clock_i, clock_j))
     }
 
+    /// Set `clocks[i]-clocks[j]` equal to `val`.
+    /// # Panics
+    ///
+    /// Panics if `i` or `j` are out of bounds.
     pub fn update(self, i: ClockIndex, j: ClockIndex, val: Bound) -> Self {
         self.map_all(|dbm| dbm.update(i, j, val))
     }
 
+    /// Increment the time value of clock `clock` by `inc`.
+    /// # Panics
+    ///
+    /// Panics if `clock` is out of bounds.
     pub fn update_increment(self, clock: ClockIndex, inc: Bound) -> Self {
         self.map_all(|dbm| dbm.update_increment(clock, inc))
     }
 
+    /// Remove all constraints on the clock `clock`.
+    /// # Panics
+    ///
+    /// Panics if `clock` is out of bounds.
     pub fn free_clock(self, clock: ClockIndex) -> Self {
         self.map_all(|dbm| dbm.free_clock(clock))
     }
 
+    /// Perform extrapolation on the federation based on the max bounds of the clocks.
+    /// # Panics
+    /// Panics if `self` and `bounds` have different dimensions.
     pub fn extrapolate_max_bounds(self, bounds: &Bounds) -> Self {
         self.map_all(|dbm| dbm.extrapolate_max_bounds(bounds))
     }
 
+    /// Perform extrapolation on the federation based on the lower and upper bounds of the clocks.
+    /// # Panics
+    /// Panics if `self` and `bounds` have different dimensions.
     pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
         self.map_all(|dbm| dbm.extrapolate_lu_bounds(bounds))
     }
 
+    /// Set the federation to be empty.
     pub fn set_empty(mut self) -> Self {
         self.dbms.clear();
         self
     }
 
+    /// Intersect the federation with the given DBM.
+    /// # Panics
+    /// Panics if `self` and `dbm2` have different dimensions.
     pub fn dbm_intersection(mut self, dbm2: &DBM<Valid>) -> Self {
         let mut res = Vec::with_capacity(self.size());
         for dbm1 in self.dbms {
@@ -300,6 +414,9 @@ impl OwnedFederation {
         self
     }
 
+    /// Intersect the federation with the given federation.
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn intersection(self, other: &Self) -> Self {
         assert_eq!(self.dim, other.dim);
         if self.is_empty() || other.is_empty() {
@@ -327,14 +444,22 @@ impl OwnedFederation {
         Self { dim, dbms: res }
     }
 
+    /// Steal the DBMs from the other federation, returning the union.
+    /// # Panics
+    /// Panics if `self` and `fed` have different dimensions.
     fn steal(mut self, fed: Self) -> Self {
+        assert_eq!(self.dim, fed.dim);
         let size = self.size();
         self.dbms.extend(fed.dbms);
         self.merge_reduce(size)
     }
 
+    /// Return the timed predecessor of `self` and `bads`.
+    /// # Panics
+    /// Panics if `self` and `fed` have different dimensions.
     #[must_use]
     pub fn predt(&self, bads: &Self) -> Self {
+        assert_eq!(self.dim, bads.dim);
         let goods = self;
         if bads.is_empty() {
             return goods.clone().down();
@@ -384,6 +509,7 @@ impl OwnedFederation {
         result
     }
 
+    /// Apply a fallible DBM function to all DBMs in the federation.
     fn filter_map_all<F>(self, f: F) -> Self
     where
         F: Fn(DBM<Valid>) -> Option<DBM<Valid>>,
@@ -394,6 +520,7 @@ impl OwnedFederation {
         }
     }
 
+    /// Apply a fallible dirty DBM function to all DBMs in the federation.
     fn filter_map_all_dirty<F>(self, f: F) -> Self
     where
         F: Fn(DBM<Dirty>) -> Option<DBM<Dirty>>,
@@ -410,6 +537,7 @@ impl OwnedFederation {
         }
     }
 
+    /// Apply a non-fallible DBM function to all DBMs in the federation.
     fn map_all<F>(self, f: F) -> Self
     where
         F: Fn(DBM<Valid>) -> DBM<Valid>,
@@ -420,6 +548,7 @@ impl OwnedFederation {
         }
     }
 
+    /// Construct a federation from a single DBM.
     pub fn from_dbm(dbm: DBM<Valid>) -> Self {
         let dim = dbm.dim;
         OwnedFederation {
@@ -428,10 +557,18 @@ impl OwnedFederation {
         }
     }
 
+    /// Construct a federation from a list of DBM.
+    /// # Panics
+    /// Panics if the DBMs have different dimensions.
     pub fn from_dbms(dim: ClockIndex, dbms: Vec<DBM<Valid>>) -> Self {
+        assert!(dbms.iter().all(|d| d.dim == dim));
         OwnedFederation { dbms, dim }
     }
 
+    /// Returns a federation with no constraints with `dim - 1` clocks.
+    ///
+    /// # Panics
+    /// Panics if `dim == 0`.
     pub fn universe(dim: ClockIndex) -> Self {
         assert!(dim > 0);
 
@@ -441,6 +578,10 @@ impl OwnedFederation {
         }
     }
 
+    /// Returns a federation where all clocks are constrained to be equal with `dim - 1` clocks.
+    ///
+    /// # Panics
+    /// Panics if `dim == 0`.
     pub fn init(dim: ClockIndex) -> Self {
         assert!(dim > 0);
 
@@ -450,6 +591,10 @@ impl OwnedFederation {
         }
     }
 
+    /// Returns a federation where all clocks are constrained to be 0 with `dim - 1` clocks.
+    ///
+    /// # Panics
+    /// Panics if `dim == 0`.
     pub fn zero(dim: ClockIndex) -> Self {
         assert!(dim > 0);
 
@@ -459,6 +604,7 @@ impl OwnedFederation {
         }
     }
 
+    /// Reduce the size of the federation by removing DBMs contained in other DBMs.
     pub fn reduce(self) -> Self {
         OwnedFederation {
             dbms: dbm_list_reduce(self.dbms),
@@ -466,6 +612,8 @@ impl OwnedFederation {
         }
     }
 
+    /// A more expensive version of `reduce` that removes DBMs contrained in the union of other DBMs.
+    // Based on the UDBM implementation
     pub fn expensive_reduce(mut self) -> Self {
         if self.size() < 2 {
             return self;
@@ -506,14 +654,17 @@ impl OwnedFederation {
         self
     }
 
+    /// Reduces the federation as in `expensive_reduce` while also merging DBM pairs that can be represented by a single DBM.
     pub fn merge_expensive_reduce(self, skips: usize) -> Self {
         self.merge_reduce_internal(true, skips)
     }
 
+    /// Reduces the federation as in `reduce` while also merging DBM pairs that can be represented by a single DBM.
     pub fn merge_reduce(self, skips: usize) -> Self {
         self.merge_reduce_internal(false, skips)
     }
 
+    // Based on the UDBM implementation
     fn merge_reduce_internal(mut self, expensive: bool, skips: usize) -> Self {
         let mut i = skips;
         let dim = self.dim;
@@ -615,11 +766,10 @@ impl OwnedFederation {
             }
             i += 1;
         }
-
-        //println!("Done");
         self
     }
 
+    // Based on the UDBM implementation
     fn subtract_dbm<D: ImmutableDBM>(self, other: &D) -> Self {
         if self.is_empty() {
             return self;
@@ -648,12 +798,19 @@ impl OwnedFederation {
         Self { dbms: result, dim }
     }
 
+    /// Add a DBM to the federation.
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn append_dbm(&mut self, dbm: DBM<Valid>) {
+        assert_eq!(self.dim, dbm.dim);
         self.dbms.push(dbm);
     }
 
     /// Non-convex union of the federations consuming the DBMs in `other` to append to `self`'s DBMs
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn union<D: ImmutableDBM>(mut self, other: &Federation<D>) -> Self {
+        assert_eq!(self.dim, other.dim);
         if self.is_empty() {
             return other.owned_clone();
         }
@@ -668,6 +825,9 @@ impl OwnedFederation {
         self
     }
 
+    /// Remove all DBMs included in `dbm` from `self`.
+    /// # Panics
+    /// Panics if `self` and `dbm` have different dimensions.
     fn remove_included_in_dbm(&mut self, dbm: &DBM<Valid>) -> bool {
         let mut other_not_included = true;
 
@@ -688,6 +848,9 @@ impl OwnedFederation {
         other_not_included
     }
 
+    /// Returns the subtraction `other` from `self`.
+    /// # Panics
+    /// Panics if `self` and `other` have different dimensions.
     pub fn subtraction<D: ImmutableDBM>(self, other: &Federation<D>) -> Self {
         let mut res = self;
 
@@ -711,6 +874,7 @@ impl OwnedFederation {
         self.dbms.get(index).cloned()
     }
 
+    /// Converts the federation into a Federation using shared memory DBMs using `alloc` as the allocator.
     pub fn into_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
         SharedFederation {
             dbms: self.dbms.into_iter().map(|dbm| alloc.to_ptr(dbm)).collect(),
