@@ -95,6 +95,7 @@ pub fn random_dbm_subset(dbm: DBM<Valid>) -> (DBM<Valid>, bool) {
     (dbm.close().unwrap(), subset)
 }
 
+/// Generate a random DBM with the given dimension.
 // Based on the UDBM implementation
 pub fn random_dbm(dim: ClockIndex) -> DBM<Valid> {
     let mut rng = rand::thread_rng();
@@ -112,7 +113,7 @@ pub fn random_dbm(dim: ClockIndex) -> DBM<Valid> {
 
     for i in 1..dim {
         let middle = rng.gen_range(0..RANGE / 2);
-        dbm[(0, i)] = (1 - rng.gen_range(0..middle + 1)).into();
+        dbm[(0, i)] = (1 - rng.gen_range(0..=middle)).into();
         dbm[(i, 0)] = (1 + middle + rng.gen_range(0..RANGE / 2)).into();
     }
 
@@ -131,8 +132,8 @@ pub fn random_dbm(dim: ClockIndex) -> DBM<Valid> {
                 7 * (rangeij - 1) / 12
             };
 
-            let dij = rng.gen_range(0..max_tighten + 1);
-            let dji = rng.gen_range(0..max_tighten + 1);
+            let dij = rng.gen_range(0..=max_tighten);
+            let dji = rng.gen_range(0..=max_tighten);
 
             match rng.gen_range(0..4) {
                 0 => {
@@ -228,6 +229,9 @@ pub fn random_dbm(dim: ClockIndex) -> DBM<Valid> {
     dbm
 }
 
+/// Get a random DBM in `fed`.
+/// # Panics
+/// Panics if `fed` is empty.
 pub fn random_dbm_in_fed(fed: &OwnedFederation) -> DBM<Valid> {
     let mut rng = rand::thread_rng();
 
@@ -235,6 +239,7 @@ pub fn random_dbm_in_fed(fed: &OwnedFederation) -> DBM<Valid> {
     fed.get_dbm(rng.gen_range(0..size)).unwrap()
 }
 
+/// Generate a random federation of `size` DBMs based on the DBMs in `fed`.
 // Based on the UDBM implementation
 pub fn random_fed_arg(fed: &OwnedFederation, size: usize) -> OwnedFederation {
     let mut rng = rand::thread_rng();
@@ -256,6 +261,9 @@ pub fn random_fed_arg(fed: &OwnedFederation, size: usize) -> OwnedFederation {
     new_fed
 }
 
+/// Generate a random `dim`-dimensional federation of `size` DBMs
+/// # Panics
+/// Panics if `dim == 0`.
 pub fn random_fed(dim: ClockIndex, size: usize) -> OwnedFederation {
     assert!(dim > 0);
     let mut fed = OwnedFederation::empty(dim);

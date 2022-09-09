@@ -102,6 +102,7 @@ pub struct Dirty {
 }
 
 impl Dirty {
+    #[must_use]
     pub fn new_clean(dim: usize) -> Self {
         Dirty {
             ci: None,
@@ -110,6 +111,7 @@ impl Dirty {
         }
     }
 
+    #[must_use]
     pub fn new_dirty(dim: usize) -> Self {
         Dirty {
             ci: None,
@@ -118,10 +120,12 @@ impl Dirty {
         }
     }
 
+    #[must_use]
     pub fn is_clean(&self) -> bool {
         self.touched.is_empty()
     }
 
+    #[must_use]
     pub fn is_dirty(&self) -> bool {
         !self.is_clean()
     }
@@ -159,10 +163,13 @@ macro_rules! check_indices {
 }
 
 impl DBM<Valid> {
+    #[must_use]
     pub fn hash(&mut self) -> u64 {
         self.state.hash.unwrap_or_else(|| self.calculate_hash())
     }
 
+    // Based on the UDBM implementation
+    #[must_use]
     pub fn can_delay_indefinitely(&self) -> bool {
         for i in 1..self.dim {
             if self[(i, 0)] < LS_INFINITY {
@@ -185,6 +192,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn relation_to(&self, other: &Self) -> DBMRelation {
         use DBMRelation::*;
         assert_eq!(self.dim, other.dim);
@@ -208,6 +216,7 @@ impl DBM<Valid> {
         Equal
     }
 
+    #[must_use]
     pub fn subset_eq(&self, other: &Self) -> bool {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
@@ -216,6 +225,7 @@ impl DBM<Valid> {
         try_subset(&self.data, &other.data, 1, n) == DBMRelation::Subset
     }
 
+    #[must_use]
     pub fn superset_eq(&self, other: &Self) -> bool {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
@@ -225,6 +235,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn equals(&self, other: &Self) -> bool {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
@@ -245,6 +256,7 @@ impl DBM<Valid> {
 
     /// Constrains the Valid DBM with `dbm[i,j]=constraint` and closes it immediately so it remains Valid.
     // Based on the UDBM implementation
+    #[must_use]
     pub fn constrain_and_close_raw(
         self,
         i: ClockIndex,
@@ -268,6 +280,7 @@ impl DBM<Valid> {
     }
 
     /// Constrains the Valid DBM with `dbm[i,j]=constraint` and closes it immediately so it remains Valid.
+    #[must_use]
     pub fn constrain_and_close(
         self,
         i: ClockIndex,
@@ -280,6 +293,7 @@ impl DBM<Valid> {
     }
 
     /// Constrains the DBM with `dbm[i,j]=constraint` without closing it afterwards
+    #[must_use]
     pub fn constrain(
         self,
         i: ClockIndex,
@@ -290,6 +304,7 @@ impl DBM<Valid> {
     }
 
     /// Constrains the DBM with `dbm[i,j]=constraint` without closing it afterwards
+    #[must_use]
     pub fn constrain_raw(
         self,
         i: ClockIndex,
@@ -300,6 +315,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn tighten(self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> Self {
         debug_assert!(self[(i, j)] > constraint && constraint.as_negated() < self[(j, i)]);
 
@@ -308,6 +324,7 @@ impl DBM<Valid> {
         dbm.close_ij(i, j).expect("Tightening must never be empty")
     }
 
+    #[must_use]
     pub fn from_conjunction(conjunction: &Conjunction, dim: ClockIndex) -> DBM<Valid> {
         let mut dbm = DBM::universe(dim);
         for cons in conjunction.iter() {
@@ -317,6 +334,7 @@ impl DBM<Valid> {
         dbm
     }
 
+    #[must_use]
     pub fn new(dim: ClockIndex, value: Inequality) -> DBM<Dirty> {
         assert!(dim > 0);
         DBM {
@@ -326,6 +344,7 @@ impl DBM<Valid> {
         }
     }
 
+    #[must_use]
     pub fn new_raw(dim: ClockIndex, value: RawInequality) -> DBM<Dirty> {
         assert!(dim > 0);
         DBM {
@@ -336,6 +355,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn zero(dim: ClockIndex) -> DBM<Valid> {
         assert!(dim > 0);
         DBM {
@@ -346,6 +366,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation of `init`
+    #[must_use]
     pub fn universe(dim: ClockIndex) -> Self {
         assert!(dim > 0);
         let mut inf = DBM {
@@ -365,12 +386,14 @@ impl DBM<Valid> {
         unsafe { inf.assert_valid() }
     }
 
+    #[must_use]
     pub fn init(dim: ClockIndex) -> DBM<Valid> {
         let res = DBM::zero(dim);
         res.up()
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn up(self) -> Self {
         let mut dbm = self.make_unsafe();
 
@@ -382,6 +405,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn down(self) -> Self {
         let mut dbm = self.make_unsafe();
 
@@ -401,6 +425,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn intersection(self, src: &Self) -> Option<Self> {
         assert_eq!(self.dim, src.dim);
         let dim = self.dim;
@@ -421,6 +446,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn convex_union(self, other: &Self) -> Self {
         assert_eq!(self.dim, other.dim);
         let dim = self.dim;
@@ -437,6 +463,7 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
+    #[must_use]
     pub fn has_intersection(&self, dbm2: &Self) -> bool {
         self.maybe_intersects(dbm2) && self.clone().intersection(dbm2).is_some()
     }
@@ -462,25 +489,16 @@ impl DBM<Valid> {
         true
     }
 
+    #[must_use]
     pub fn satisfies(&self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> bool {
         self.satisfies_raw(i, j, constraint.into())
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn satisfies_raw(&self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> bool {
         assert!(i != j);
         !(self[(i, j)] > constraint && constraint.as_negated() >= self[(j, i)])
-    }
-
-    // Based on the UDBM implementation
-    pub fn is_unbounded(&self) -> bool {
-        for i in 1..self.dim {
-            if self[(i, 0)] < LS_INFINITY {
-                return false;
-            }
-        }
-
-        true
     }
 
     // Based on the UDBM implementation
@@ -534,6 +552,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
         let mut dbm = self.make_unsafe();
         let mut changed = false;
@@ -584,6 +603,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn update_clock_val(self, clock: ClockIndex, val: Bound) -> Self {
         assert!(clock > 0);
 
@@ -601,6 +621,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn update_clock_clock(self, clock_i: ClockIndex, clock_j: ClockIndex) -> Self {
         assert!(clock_i > 0 && clock_j > 0);
 
@@ -620,6 +641,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn update_increment(self, clock: ClockIndex, inc: Bound) -> Self {
         assert!(clock > 0);
         if inc == 0 {
@@ -644,6 +666,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn update(self, i: ClockIndex, j: ClockIndex, val: Bound) -> Self {
         assert!(i > 0 && j > 0);
         if i == j {
@@ -670,6 +693,7 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn free_clock(self, clock: ClockIndex) -> Self {
         check_indices!(self, clock);
         assert!(clock > 0);
@@ -695,6 +719,7 @@ impl DBM<Valid> {
 
     /// Tighten the dbm with the negated constraints of rhs dbm, potentially splitting the dbm in two.
     // Based on the UDBM implementation
+    #[must_use]
     pub fn subtract_dbm(self, rhs: &DBM<Valid>) -> Vec<DBM<Valid>> {
         if self.maybe_intersects(rhs) {
             let matrix = get_dbm_bit_matrix(rhs);
@@ -836,6 +861,7 @@ impl TryInto<DBM<Valid>> for DBM<Dirty> {
 impl DBM<Dirty> {
     /// Constrains the DBM with `dbm[i,j]=constraint` without closing it afterwards
     // Based on the UDBM implementation
+    #[must_use]
     pub fn constrain_raw(
         mut self,
         i: ClockIndex,
@@ -855,6 +881,7 @@ impl DBM<Dirty> {
     }
 
     /// Constrains the DBM with `dbm[i,j]=constraint` without closing it afterwards
+    #[must_use]
     pub fn constrain(self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> Option<Self> {
         check_indices!(self, i, j);
 
@@ -905,6 +932,7 @@ impl DBM<Dirty> {
         Some(unsafe { dbm.assert_valid() })
     }
 
+    #[must_use]
     pub fn close(self) -> Option<DBM<Valid>> {
         self.close_touched()
     }
@@ -945,6 +973,7 @@ impl DBM<Dirty> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn up(mut self) -> Self {
         for i in 1..self.dim {
             self[(i, 0)] = LS_INFINITY;
@@ -971,6 +1000,7 @@ impl DBM<Dirty> {
 
 impl DBM<Unsafe> {
     // Based on the UDBM implementation
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         for i in 0..self.dim {
             if self[(i, i)] < LE_ZERO {
@@ -1001,6 +1031,7 @@ impl DBM<Unsafe> {
     }
 
     // Based on the UDBM implementation
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         if !self.is_closed() {
             println!("Not closed");
@@ -1152,6 +1183,7 @@ impl DBM<Unsafe> {
 }
 
 impl<T: DBMState> DBM<T> {
+    #[must_use]
     pub fn conjunction_of_minimal_constraints(&self) -> Conjunction {
         let (bf, n_cons) = get_dbm_bit_matrix(self).split();
         let n_cons = n_cons as usize;
@@ -1226,7 +1258,7 @@ impl<T: DBMState> Display for DBM<T> {
     }
 }
 
-#[allow(unused)]
+#[cfg(test)]
 mod test {
     use super::DBM;
     use crate::zones::rand_gen::random_dbm;
