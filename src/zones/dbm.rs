@@ -180,6 +180,39 @@ impl DBM<Valid> {
         true
     }
 
+    /// Update the given `bounds` with the clock bounds of this DBM
+    pub fn update_bounds(&self, bounds: &mut Bounds) {
+        assert_eq!(self.dim, bounds.dim());
+        for i in 0..self.dim {
+            for j in 0..self.dim {
+                // i-j <?= bound
+                if i == j {
+                    continue;
+                }
+
+                let bound = self[(i, j)];
+
+                // If the upper bound is positive and finite we add it to the bounds
+                if i != 0 && !bound.is_inf() && bound.bound() >= 0 {
+                    bounds.add_upper(i, bound.bound())
+                }
+
+                // If the lower bound is non-negative (after negating) we add it to the bounds
+                // Recall we go from `i-j <?= bound` to `i-bound <?= j`
+                if j != 0 && bound.bound() <= 0 {
+                    bounds.add_lower(j, -bound.bound())
+                }
+            }
+        }
+    }
+
+    /// Returns the clock bounds of this DBM
+    pub fn get_bounds(&self) -> Bounds {
+        let mut bounds = Bounds::new(self.dim);
+        self.update_bounds(&mut bounds);
+        bounds
+    }
+
     fn calculate_hash(&mut self) -> u64 {
         let mut s = DefaultHasher::new();
 
@@ -1498,6 +1531,24 @@ mod test {
                 let dbm2 = DBM::from_conjunction(&conj, dim);
 
                 assert!(dbm1.equals(&dbm2));
+            }
+        }
+    }
+
+    /// Ensure that the bounds are correct by extrapolating with them and checking that the dbm remains unchanged.
+    #[test]
+    fn test_bounds() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                let dbm1 = random_dbm(dim);
+                let bounds = dbm1.get_bounds();
+
+                let dbm2 = dbm1.clone().extrapolate_max_bounds(&bounds);
+
+                assert!(
+                    dbm1.equals(&dbm2),
+                    "Not equal for:\nBounds: {bounds:?}\nDBM1: {dbm1}\nDBM2: {dbm2}"
+                );
             }
         }
     }

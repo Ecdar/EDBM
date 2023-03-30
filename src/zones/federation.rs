@@ -43,6 +43,20 @@ impl<T: ImmutableDBM> Federation<T> {
         self.dim
     }
 
+    /// Update the given `bounds` with the clock bounds of the federation.
+    pub fn update_bounds(&self, bounds: &mut Bounds) {
+        for dbm in &self.dbms {
+            dbm.as_valid_ref().update_bounds(bounds);
+        }
+    }
+
+    /// Returns the clock bounds of the federation.
+    pub fn get_bounds(&self) -> Bounds {
+        let mut bounds = Bounds::new(self.dim);
+        self.update_bounds(&mut bounds);
+        bounds
+    }
+
     /// Returns whether the federation can delay indefinitely.
     ///
     /// Same as `Federation::is_unbounded`.
@@ -1510,6 +1524,26 @@ mod test {
                     let fed2 = OwnedFederation::from_disjunction(&disj, dim);
 
                     assert!(fed1.equals(&fed2));
+                }
+            }
+        }
+    }
+
+    /// Ensure that the bounds are correct by extrapolating with them and checking that the dbm remains unchanged.
+    #[test]
+    fn test_bounds() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let bounds = fed1.get_bounds();
+
+                    let fed2 = fed1.clone().extrapolate_max_bounds(&bounds);
+
+                    assert!(
+                        fed1.equals(&fed2),
+                        "Not equal for:\nBounds: {bounds:?}\nFED1: {fed1}\nFED2: {fed2}"
+                    );
                 }
             }
         }
