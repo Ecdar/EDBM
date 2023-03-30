@@ -552,6 +552,9 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    /// Perform extrapolation on the dbm based on the lower and upper bounds of the clocks.
+    /// # Warning
+    /// Use with caution. Lower and upper bound based extrapolation is not sound for all types of reachability problems.
     #[must_use]
     pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
         let mut dbm = self.make_unsafe();

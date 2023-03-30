@@ -390,6 +390,8 @@ impl OwnedFederation {
     }
 
     /// Perform extrapolation on the federation based on the lower and upper bounds of the clocks.
+    /// # Warning
+    /// Use with caution. Lower and upper bound based extrapolation is not sound for all types of reachability problems.
     /// # Panics
     /// Panics if `self` and `bounds` have different dimensions.
     pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
