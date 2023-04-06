@@ -225,7 +225,7 @@ impl Display for BitField {
     }
 }
 
-#[allow(unused)]
+#[cfg(test)]
 mod test {
     use crate::util::bit_conversion::BITS;
 

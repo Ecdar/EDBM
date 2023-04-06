@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-use crate::zones::{ImmutableDBM, OwnedFederation, SharedFederation, Valid, DBM, Federation};
+use crate::zones::{Federation, ImmutableDBM, OwnedFederation, SharedFederation, Valid, DBM};
 
 type HashType = u64;
 
@@ -168,13 +168,13 @@ impl DBMAllocator for BaseDBMAllocator {
     }
 }
 
-#[allow(unused)]
+#[cfg(test)]
 mod test {
     use std::{sync::Arc, thread, time::Duration};
 
     use crate::{
-        memory::allocator::{BaseDBMAllocator, BucketDBMAllocator, SharedDBMAllocator},
-        zones::{rand_gen::random_fed, ImmutableDBM, DBM},
+        memory::allocator::BucketDBMAllocator,
+        zones::{rand_gen::random_fed, DBM},
     };
 
     use super::DBMAllocator;
@@ -191,7 +191,7 @@ mod test {
                 let dbm_ptr = alloc.to_ptr(dbm);
 
                 thread::sleep(Duration::from_secs_f32(0.1));
-                let ptr2 = dbm_ptr.clone();
+                let _ptr2 = dbm_ptr.clone();
                 println!("{}", dbm_ptr.strong_count());
                 let dbm = dbm_ptr.take_dbm().up();
                 let dbm_ptr = alloc.to_ptr(dbm);
@@ -211,8 +211,6 @@ mod test {
 
     #[test]
     fn test_fed_alloc() {
-        let mut rng = rand::thread_rng();
-
         for &dim in DIMS {
             for _ in 0..TEST_ATTEMPTS {
                 for size in 1..TEST_SIZE {

@@ -23,6 +23,7 @@ pub type OwnedFederation = Federation<DBM<Valid>>;
 
 /// Owned Federations are mutable. They own the internal DBMs allowing for efficient (lockless) internal mutability.
 #[derive(Clone)]
+#[must_use]
 pub struct Federation<T>
 where
     T: ImmutableDBM,
@@ -37,13 +38,29 @@ impl<T: ImmutableDBM> Federation<T> {
     }
 
     /// Returns the dimension of the federation (i.e. the number of `clocks + 1`)
+    #[must_use]
     pub fn dim(&self) -> ClockIndex {
         self.dim
+    }
+
+    /// Update the given `bounds` with the clock bounds of the federation.
+    pub fn update_bounds(&self, bounds: &mut Bounds) {
+        for dbm in &self.dbms {
+            dbm.as_valid_ref().update_bounds(bounds);
+        }
+    }
+
+    /// Returns the clock bounds of the federation.
+    pub fn get_bounds(&self) -> Bounds {
+        let mut bounds = Bounds::new(self.dim);
+        self.update_bounds(&mut bounds);
+        bounds
     }
 
     /// Returns whether the federation can delay indefinitely.
     ///
     /// Same as `Federation::is_unbounded`.
+    #[must_use]
     pub fn can_delay_indefinitely(&self) -> bool {
         self.dbms
             .iter()
@@ -56,32 +73,22 @@ impl<T: ImmutableDBM> Federation<T> {
     }
 
     /// Returns whether the federation is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.dbms.is_empty()
     }
 
     /// Returns whether the federation has no constraints on clocks.
+    #[must_use]
     pub fn is_universe(&self) -> bool {
         let uni = OwnedFederation::universe(self.dim);
         uni.subset_eq(self)
     }
 
     /// Returns the number of DBMs in the federation.
+    #[must_use]
     pub fn size(&self) -> usize {
         self.dbms.len()
-    }
-
-    /// Returns whether the federation can delay indefinitely.
-    ///
-    /// Same as `Federation::can_delay_indefinitely`.
-    pub fn is_unbounded(&self) -> bool {
-        for dbm in &self.dbms {
-            if dbm.as_valid_ref().is_unbounded() {
-                return true;
-            }
-        }
-
-        false
     }
 
     /// Get the first DBM in the federation if the federation only has one DBM.
@@ -127,6 +134,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn subset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         self.is_subtraction_empty(other)
     }
@@ -135,6 +143,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn superset_eq<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         other.is_subtraction_empty(self)
     }
@@ -143,6 +152,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn subset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
         if self.is_empty() {
             return true;
@@ -161,6 +171,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn has_intersection<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         assert_eq!(self.dim, other.dim);
         if other.is_empty() {
@@ -185,6 +196,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn superset_eq_dbm<D: ImmutableDBM>(&self, other: &D) -> bool {
         let other = OwnedFederation::from_dbm(other.as_valid_ref().clone());
         self.superset_eq(&other)
@@ -194,6 +206,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn equals<D: ImmutableDBM>(&self, other: &Federation<D>) -> bool {
         self.relation(other) == DBMRelation::Equal
     }
@@ -202,6 +215,7 @@ impl<T: ImmutableDBM> Federation<T> {
     ///
     /// # Panics
     /// Panics if `self` and `other` have different dimensions.
+    #[must_use]
     pub fn relation<D: ImmutableDBM>(&self, other: &Federation<D>) -> DBMRelation {
         use DBMRelation::*;
         let self_included = self.is_subtraction_empty(other);
@@ -216,6 +230,7 @@ impl<T: ImmutableDBM> Federation<T> {
     }
 
     /// Returns the federation as a minimal disjunction of conjunctions of constraints.
+    #[must_use]
     pub fn minimal_constraints(&self) -> Disjunction {
         let fed = self.owned_clone().merge_expensive_reduce(0);
         let mut conjunctions = Vec::with_capacity(self.size());
@@ -325,6 +340,7 @@ impl OwnedFederation {
     /// # Panics
     ///
     /// Panics if `i` or `j` are out of bounds.
+    #[must_use]
     pub fn satisfies(&self, i: ClockIndex, j: ClockIndex, constraint: Inequality) -> bool {
         self.dbms.iter().any(|dbm| dbm.satisfies(i, j, constraint))
     }
@@ -333,6 +349,7 @@ impl OwnedFederation {
     /// # Panics
     ///
     /// Panics if `i` or `j` are out of bounds.
+    #[must_use]
     pub fn satisfies_raw(&self, i: ClockIndex, j: ClockIndex, constraint: RawInequality) -> bool {
         self.dbms
             .iter()
@@ -387,6 +404,8 @@ impl OwnedFederation {
     }
 
     /// Perform extrapolation on the federation based on the lower and upper bounds of the clocks.
+    /// # Warning
+    /// Use with caution. Lower and upper bound based extrapolation is not sound for all types of reachability problems.
     /// # Panics
     /// Panics if `self` and `bounds` have different dimensions.
     pub fn extrapolate_lu_bounds(self, bounds: &Bounds) -> Self {
@@ -457,7 +476,6 @@ impl OwnedFederation {
     /// Return the timed predecessor of `self` and `bads`.
     /// # Panics
     /// Panics if `self` and `fed` have different dimensions.
-    #[must_use]
     pub fn predt(&self, bads: &Self) -> Self {
         assert_eq!(self.dim, bads.dim);
         let goods = self;
@@ -676,7 +694,8 @@ impl OwnedFederation {
                 let dbm_i = &self.dbms[i];
                 let dbm_j = &self.dbms[j];
 
-                let mut nb_ok = if dim <= 2 { 1 } else { 0 };
+                let has_low_dim = dim <= 2;
+                let mut nb_ok = i32::from(has_low_dim);
 
                 let mut subset = true;
                 let mut superset = true;
@@ -800,7 +819,7 @@ impl OwnedFederation {
 
     /// Add a DBM to the federation.
     /// # Panics
-    /// Panics if `self` and `other` have different dimensions.
+    /// Panics if `self` and `dbm` have different dimensions.
     pub fn append_dbm(&mut self, dbm: DBM<Valid>) {
         assert_eq!(self.dim, dbm.dim);
         self.dbms.push(dbm);
@@ -875,7 +894,7 @@ impl OwnedFederation {
     }
 
     /// Converts the federation into a Federation using shared memory DBMs using `alloc` as the allocator.
-    pub fn into_shared(self, alloc: impl DBMAllocator) -> SharedFederation {
+    pub fn into_shared(self, alloc: &impl DBMAllocator) -> SharedFederation {
         SharedFederation {
             dbms: self.dbms.into_iter().map(|dbm| alloc.to_ptr(dbm)).collect(),
             dim: self.dim,
@@ -950,15 +969,15 @@ impl SharedFederation {
     }
 }
 
-#[allow(unused)]
+#[cfg(test)]
 mod test {
     use rand::Rng;
 
     use crate::{
-        util::{bounds::Bounds, constraints::Inequality},
+        util::bounds::Bounds,
         zones::{
             rand_gen::{random_dbm_in_fed, random_dbm_subset, random_fed, random_fed_arg},
-            DBMRelation, DBM,
+            DBMRelation,
         },
     };
 
@@ -1144,7 +1163,7 @@ mod test {
                     let fed2 = fed1.clone();
                     let fed1 = fed1.up();
                     assert!(fed2.subset_eq(&fed1));
-                    assert!(size == 0 || fed1.is_unbounded());
+                    assert!(size == 0 || fed1.can_delay_indefinitely());
 
                     let mut dbms = vec![];
                     for dbm2 in fed2.dbms {
@@ -1476,7 +1495,7 @@ mod test {
                     let fed3 = fed1.clone().extrapolate_lu_bounds(&max_bounds);
                     let fed4 = fed1.clone().extrapolate_lu_bounds(&bounds);
 
-                    /// 1 <= 2 == 3 <= 4
+                    // 1 <= 2 == 3 <= 4
                     assert!(fed1.subset_eq(&fed2));
                     assert!(fed2.equals(&fed3));
                     assert_eq!(fed2.relation(&fed3), DBMRelation::Equal);
@@ -1495,7 +1514,7 @@ mod test {
 
     #[test]
     fn from_constraints_test() {
-        let mut rng = rand::thread_rng();
+        //let mut rng = rand::thread_rng();
 
         for &dim in DIMS {
             for _ in 0..TEST_ATTEMPTS {
@@ -1505,6 +1524,26 @@ mod test {
                     let fed2 = OwnedFederation::from_disjunction(&disj, dim);
 
                     assert!(fed1.equals(&fed2));
+                }
+            }
+        }
+    }
+
+    /// Ensure that the bounds are correct by extrapolating with them and checking that the dbm remains unchanged.
+    #[test]
+    fn test_bounds() {
+        for &dim in DIMS {
+            for _ in 0..TEST_ATTEMPTS {
+                for size in 1..TEST_SIZE {
+                    let fed1 = random_fed(dim, size);
+                    let bounds = fed1.get_bounds();
+
+                    let fed2 = fed1.clone().extrapolate_max_bounds(&bounds);
+
+                    assert!(
+                        fed1.equals(&fed2),
+                        "Not equal for:\nBounds: {bounds:?}\nFED1: {fed1}\nFED2: {fed2}"
+                    );
                 }
             }
         }
