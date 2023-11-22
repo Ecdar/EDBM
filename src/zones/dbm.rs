@@ -3,6 +3,7 @@ use std::{
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
 };
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     expensive_assert,
@@ -674,6 +675,40 @@ impl DBM<Valid> {
         }
 
         unsafe { dbm.assert_valid() }
+    }
+
+    fn compute_tables(src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
+        let mut dst_to_src = Vec::<ClockIndex>::default();
+        let mut src_to_dst = Vec::<ClockIndex>::default();
+        let mut src_ind = 0;
+        assert_eq!(src_clocks.len(), dst_clocks.len());
+
+        for (src, dst) in src_clocks.iter().zip(dst_clocks.iter()){
+            if src | dst {
+                if dst {
+                    src_to_dst.push(dst_to_src.len());
+                    if src {
+                        dst_to_src.push(0);
+                    }
+                    else {
+                        dst_to_src.push(src_ind);
+                        src_ind += 1;
+                    }
+                }
+                else {
+                    src_to_dst.push(0);
+                    if !src {
+                        src_ind += 1;
+                    }
+                }
+            }
+        };
+
+        return (src_to_dst, dst_to_src);
+    }
+
+    pub fn update_dbm(self, remove_clocks: HashSet<ClockIndex>) {
+
     }
 
     // Based on the UDBM implementation
