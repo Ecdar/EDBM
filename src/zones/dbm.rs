@@ -19,6 +19,8 @@ use crate::{
     zones::util::worst_value,
 };
 use std::hash::{Hash, Hasher};
+use crate::util::constraints::InnerRawInequality;
+use crate::util::constraints::Strictness::Strict;
 
 use super::{
     minimal_graph::{get_dbm_bit_matrix, BitMatrix},
@@ -677,7 +679,7 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
-    fn compute_tables(src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
+    fn compute_tables(self, src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
         let mut dst_to_src = Vec::<ClockIndex>::default();
         let mut src_to_dst = Vec::<ClockIndex>::default();
         let mut src_ind = 0;
@@ -707,8 +709,37 @@ impl DBM<Valid> {
         return (src_to_dst, dst_to_src);
     }
 
-    pub fn update_dbm(self, remove_clocks: HashSet<ClockIndex>) {
+    fn update_dbm(self, src: DBM<Valid>, dst_to_src: Vec<ClockIndex>) {
+        self.data[0] = LE_ZERO;
 
+        for j in 1..self.dim {
+            self.data[j] = if dst_to_src[j] == 0 { src.data[j] } else { LE_ZERO };
+        }
+
+        for i in 1..self.dim {
+            if dst_to_src[i] == 0 { // If copy from src.
+                let constraint0 = src.data[src.dim * dst_to_src[i]];
+                self.data[i] = constraint0;
+
+                for j in 1..self.dim {
+                    self.data[i + self.dim  * j] = if dst_to_src[j] == 0 { src.data[dst_to_src[j]] } else { constraint0 }
+                }
+            }
+            else { // Insert new row.
+                for j in 1..self.dim {
+                    self.data[i + self.dim * j] = LS_INFINITY;
+                }
+            }
+            self.data[i + i * self.dim] = LE_ZERO;
+        }
+    }
+
+    fn shrink_expand(self, src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Option<DBM<Valid>>, Vec<ClockIndex>) {
+        assert_eq!(src_clocks.len(), dst_clocks.len());
+        let dst = DBM::<Valid>::new(src_clocks.len(), Strict.into());
+        let (src_to_dst, dst_to_src) = self.compute_tables(src_clocks, dst_clocks);
+        dst.update_dbm(self, dst_to_src);
+        return (dst.close(), src_to_dst);
     }
 
     // Based on the UDBM implementation
