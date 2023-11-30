@@ -698,8 +698,6 @@ impl DBM<Valid> {
             }
 
             src_ind += 1;
-            if src {
-            }
         };
 
         return (src_to_dst, dst_to_src);
@@ -1372,7 +1370,8 @@ impl<T: DBMState> Display for DBM<T> {
 #[cfg(test)]
 mod test {
     use crate::util::constraints::Inequality::LE;
-    use crate::util::constraints::{Bound, RawInequality};
+    use crate::util::constraints::{Bound};
+    use crate::util::constraints::raw_constants::{LE_ZERO, LS_INFINITY};
     use super::DBM;
     use crate::zones::rand_gen::random_dbm;
     use crate::zones::DBMRelation;
@@ -1456,9 +1455,27 @@ mod test {
         let src_bit = vec![true, true, false, false, true, false, false];
         let dst_bit = vec![true, true, false, false, true, true, true];
         let (dst, src_to_dst) = src.shrink_expand(&src_bit, &dst_bit);
-        println!("{:?}", src.data);
-        println!("{:?}", dst.data);
-        println!("{:?}", src_to_dst);
+
+        assert_eq!(dst.dim, 5);
+        for i in 0..5 {
+            assert_eq!(dst.data[i + i * dst.dim], LE_ZERO);
+        }
+        assert_eq!(dst.data[0 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[1 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[2 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[3 + 4 * dst.dim], LS_INFINITY);
+
+        assert_eq!(dst.data[0 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[2 + 1 * dst.dim], LE(9).into());
+        assert_eq!(dst.data[3 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[4 + 1 * dst.dim], LE(5).into());
+
+        assert!(src_to_dst.len() > 5);
+        assert_eq!(src_to_dst[0], 0);
+        assert_eq!(src_to_dst[1], 1);
+        assert_eq!(src_to_dst[2], 0);
+        assert_eq!(src_to_dst[3], 0);
+        assert_eq!(src_to_dst[4], 2);
     }
 
     #[test]
@@ -1470,9 +1487,26 @@ mod test {
 
         let src_bit = vec![true, true, false, false, true];
         let (dst, src_to_dst) = src.shrink_expand(&src_bit, &src_bit);
-        println!("{:?}", src.data);
-        println!("{:?}", dst.data);
-        println!("{:?}", src_to_dst);
+
+        assert_eq!(dst.dim, 3);
+        for i in 0..3 {
+            assert_eq!(dst.data[i + i * dst.dim], LE_ZERO);
+        }
+        assert_eq!(dst.data[1 + 0 * dst.dim], LE(1).into());
+        assert_eq!(dst.data[2 + 0 * dst.dim], LE(4).into());
+
+        assert_eq!(dst.data[0 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[2 + 1 * dst.dim], LE(9).into());
+
+        assert_eq!(dst.data[0 + 2 * dst.dim], LE(20).into());
+        assert_eq!(dst.data[1 + 2 * dst.dim], LE(21).into());
+
+        assert!(src_to_dst.len() > 5);
+        assert_eq!(src_to_dst[0], 0);
+        assert_eq!(src_to_dst[1], 1);
+        assert_eq!(src_to_dst[2], 0);
+        assert_eq!(src_to_dst[3], 0);
+        assert_eq!(src_to_dst[4], 2);
     }
 
     #[test]
