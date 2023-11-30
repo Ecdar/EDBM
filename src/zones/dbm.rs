@@ -3,7 +3,6 @@ use std::{
     fmt::{Debug, Display},
     ops::{Index, IndexMut},
 };
-use std::collections::{HashMap, HashSet};
 
 use crate::{
     expensive_assert,
@@ -19,8 +18,6 @@ use crate::{
     zones::util::worst_value,
 };
 use std::hash::{Hash, Hasher};
-use crate::util::constraints::InnerRawInequality;
-use crate::util::constraints::Strictness::Strict;
 
 use super::{
     minimal_graph::{get_dbm_bit_matrix, BitMatrix},
@@ -679,67 +676,79 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
-    fn compute_tables(self, src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
+    fn compute_tables(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
         let mut dst_to_src = Vec::<ClockIndex>::default();
         let mut src_to_dst = Vec::<ClockIndex>::default();
         let mut src_ind = 0;
         assert_eq!(src_clocks.len(), dst_clocks.len());
 
         for (src, dst) in src_clocks.iter().zip(dst_clocks.iter()){
-            if src | dst {
-                if dst {
-                    src_to_dst.push(dst_to_src.len());
-                    if src {
-                        dst_to_src.push(0);
-                    }
-                    else {
-                        dst_to_src.push(src_ind);
-                        src_ind += 1;
-                    }
+            let (src, dst) = (src.to_owned(), dst.to_owned());
+            if dst {
+                src_to_dst.push(dst_to_src.len());
+                if src {
+                    dst_to_src.push(src_ind);
                 }
                 else {
-                    src_to_dst.push(0);
-                    if !src {
-                        src_ind += 1;
-                    }
+                    dst_to_src.push(0);
                 }
+            }
+            else {
+                src_to_dst.push(0);
+            }
+
+            src_ind += 1;
+            if src {
             }
         };
 
         return (src_to_dst, dst_to_src);
     }
 
-    fn update_dbm(self, src: DBM<Valid>, dst_to_src: Vec<ClockIndex>) {
+    fn update_dbm(&mut self, src: &DBM<Valid>, dst_to_src: &Vec<ClockIndex>) {
         self.data[0] = LE_ZERO;
 
         for j in 1..self.dim {
-            self.data[j] = if dst_to_src[j] == 0 { src.data[j] } else { LE_ZERO };
+            if dst_to_src[j] == 0
+            {
+                self.data[j] = LE_ZERO;
+            }
+            else
+            {
+                self.data[j] = src.data[dst_to_src[j]];
+            }
         }
 
         for i in 1..self.dim {
-            if dst_to_src[i] == 0 { // If copy from src.
+            if dst_to_src[i] != 0 { // If copy from src.
                 let constraint0 = src.data[src.dim * dst_to_src[i]];
-                self.data[i] = constraint0;
+                self.data[i * self.dim] = constraint0;
 
                 for j in 1..self.dim {
-                    self.data[i + self.dim  * j] = if dst_to_src[j] == 0 { src.data[dst_to_src[j]] } else { constraint0 }
+                    if dst_to_src[j] == 0
+                    {
+                        self.data[j + i * self.dim] = constraint0;
+                    }
+                    else {
+                        self.data[j + i * self.dim] = src.data[dst_to_src[j] + src.dim * dst_to_src[i]];
+                    }
                 }
             }
             else { // Insert new row.
-                for j in 1..self.dim {
-                    self.data[i + self.dim * j] = LS_INFINITY;
+                for j in 0..self.dim {
+                    self.data[j + i * self.dim] = LS_INFINITY;
                 }
             }
             self.data[i + i * self.dim] = LE_ZERO;
         }
     }
 
-    fn shrink_expand(self, src_clocks: Vec<bool>, dst_clocks: Vec<bool>) -> (Option<DBM<Valid>>, Vec<ClockIndex>) {
+    fn shrink_expand(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (DBM<Valid>, Vec<ClockIndex>) {
         assert_eq!(src_clocks.len(), dst_clocks.len());
-        let dst = DBM::<Valid>::new(src_clocks.len(), Strict.into());
         let (src_to_dst, dst_to_src) = self.compute_tables(src_clocks, dst_clocks);
-        dst.update_dbm(self, dst_to_src);
-        return (dst.close(), src_to_dst);
+        let mut dst = DBM::init(dst_to_src.len());
+        dst.update_dbm(self, &dst_to_src);
+        return (dst, src_to_dst);
     }
 
     // Based on the UDBM implementation
@@ -1362,6 +1371,8 @@ impl<T: DBMState> Display for DBM<T> {
 
 #[cfg(test)]
 mod test {
+    use crate::util::constraints::Inequality::LE;
+    use crate::util::constraints::{Bound, RawInequality};
     use super::DBM;
     use crate::zones::rand_gen::random_dbm;
     use crate::zones::DBMRelation;
@@ -1433,6 +1444,35 @@ mod test {
             Some(())
         }
         test().unwrap()
+    }
+
+    #[test]
+    fn dbm_shrink_expand(){
+        let mut src = DBM::init(5);
+        for i in 1..25 {
+            src.data[i] = From::from(LE(i as Bound));
+        }
+
+        let src_bit = vec![true, true, false, false, true, false, false];
+        let dst_bit = vec![true, true, false, false, true, true, true];
+        let (dst, src_to_dst) = src.shrink_expand(&src_bit, &dst_bit);
+        println!("{:?}", src.data);
+        println!("{:?}", dst.data);
+        println!("{:?}", src_to_dst);
+    }
+
+    #[test]
+    fn dbm_shrink(){
+        let mut src = DBM::init(5);
+        for i in 1..25 {
+            src.data[i] = From::from(LE(i as Bound));
+        }
+
+        let src_bit = vec![true, true, false, false, true];
+        let (dst, src_to_dst) = src.shrink_expand(&src_bit, &src_bit);
+        println!("{:?}", src.data);
+        println!("{:?}", dst.data);
+        println!("{:?}", src_to_dst);
     }
 
     #[test]
