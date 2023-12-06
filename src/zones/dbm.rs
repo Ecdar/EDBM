@@ -676,6 +676,7 @@ impl DBM<Valid> {
         unsafe { dbm.assert_valid() }
     }
 
+    // Based on the UDBM implementation
     fn compute_tables(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
         let mut dst_to_src = Vec::<ClockIndex>::default();
         let mut src_to_dst = Vec::<ClockIndex>::default();
@@ -703,9 +704,11 @@ impl DBM<Valid> {
         return (src_to_dst, dst_to_src);
     }
 
+    // Based on the UDBM implementation
     fn update_dbm(&mut self, src: &DBM<Valid>, dst_to_src: &Vec<ClockIndex>) {
         self.data[0] = LE_ZERO;
 
+        // Clocks [0,j]
         for j in 1..self.dim {
             if dst_to_src[j] == 0
             {
@@ -720,6 +723,7 @@ impl DBM<Valid> {
         for i in 1..self.dim {
             if dst_to_src[i] != 0 { // If copy from src.
                 let constraint0 = src.data[src.dim * dst_to_src[i]];
+                // Clock [i, 0]
                 self.data[i * self.dim] = constraint0;
 
                 for j in 1..self.dim {
@@ -741,7 +745,24 @@ impl DBM<Valid> {
         }
     }
 
-    fn shrink_expand(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (DBM<Valid>, Vec<ClockIndex>) {
+    // Based on the UDBM implementation
+    /// 0,      1,      2,      3,      4
+    /// 5,      6,      7,      8,      9
+    /// 10,     11,     12,     13,     14
+    /// 15,     16,     17,     18,     19
+    /// 20,     21,     22,     23,     24
+    /// is redrawn into
+    /// 0,      1,      4,       0,      0
+    /// 5,      0,      9,       5,      5
+    /// 10,     11,     0,       10,     10
+    /// inf,    inf,    inf,     0,      inf
+    /// inf,    inf,    inf,     inf,    0
+    /// With clock inputs
+    /// src_clocks: [true, true, true, false, false, false, false]
+    /// dst_clocks: [true, true, true, false, false, true, true]
+    /// It will also return a mapping of the src clocks to the dst clocks.
+    /// src_to_dst: [0, 1, 2, 0, 0, 3, 4]
+    pub fn shrink_expand(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (DBM<Valid>, Vec<ClockIndex>) {
         assert_eq!(src_clocks.len(), dst_clocks.len());
         let (src_to_dst, dst_to_src) = self.compute_tables(src_clocks, dst_clocks);
         let mut dst = DBM::init(dst_to_src.len());
