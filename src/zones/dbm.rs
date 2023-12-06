@@ -684,10 +684,9 @@ impl DBM<Valid> {
         assert_eq!(src_clocks.len(), dst_clocks.len());
 
         for (src, dst) in src_clocks.iter().zip(dst_clocks.iter()){
-            let (src, dst) = (src.to_owned(), dst.to_owned());
-            if dst {
+            if *dst {
                 src_to_dst.push(dst_to_src.len());
-                if src {
+                if *src {
                     dst_to_src.push(src_ind);
                 }
                 else {
@@ -1491,7 +1490,7 @@ mod test {
         assert_eq!(dst.data[3 + 1 * dst.dim], LE(5).into());
         assert_eq!(dst.data[4 + 1 * dst.dim], LE(5).into());
 
-        assert!(src_to_dst.len() > 5);
+        assert_eq!(src_to_dst.len(), 7);
         assert_eq!(src_to_dst[0], 0);
         assert_eq!(src_to_dst[1], 1);
         assert_eq!(src_to_dst[2], 0);
@@ -1522,7 +1521,7 @@ mod test {
         assert_eq!(dst.data[0 + 2 * dst.dim], LE(20).into());
         assert_eq!(dst.data[1 + 2 * dst.dim], LE(21).into());
 
-        assert!(src_to_dst.len() > 5);
+        assert_eq!(src_to_dst.len(), 5);
         assert_eq!(src_to_dst[0], 0);
         assert_eq!(src_to_dst[1], 1);
         assert_eq!(src_to_dst[2], 0);
