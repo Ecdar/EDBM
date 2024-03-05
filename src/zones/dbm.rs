@@ -677,6 +677,99 @@ impl DBM<Valid> {
     }
 
     // Based on the UDBM implementation
+    fn compute_tables(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (Vec<ClockIndex>, Vec<ClockIndex>) {
+        let mut dst_to_src = Vec::<ClockIndex>::default();
+        let mut src_to_dst = Vec::<ClockIndex>::default();
+        let mut src_ind = 0;
+        assert_eq!(src_clocks.len(), dst_clocks.len());
+
+        for (src, dst) in src_clocks.iter().zip(dst_clocks.iter()){
+            if *dst {
+                src_to_dst.push(dst_to_src.len());
+                if *src {
+                    dst_to_src.push(src_ind);
+                }
+                else {
+                    dst_to_src.push(0);
+                }
+            }
+            else {
+                src_to_dst.push(0);
+            }
+
+            src_ind += 1;
+        };
+
+        return (src_to_dst, dst_to_src);
+    }
+
+    // Based on the UDBM implementation
+    fn update_dbm(&mut self, src: &DBM<Valid>, dst_to_src: &Vec<ClockIndex>) {
+        self.data[0] = LE_ZERO;
+
+        // Clocks [0,j]
+        for j in 1..self.dim {
+            if dst_to_src[j] == 0
+            {
+                self.data[j] = LE_ZERO;
+            }
+            else
+            {
+                self.data[j] = src.data[dst_to_src[j]];
+            }
+        }
+
+        for i in 1..self.dim {
+            if dst_to_src[i] != 0 { // If copy from src.
+                let constraint0 = src.data[src.dim * dst_to_src[i]];
+                // Clock [i, 0]
+                self.data[i * self.dim] = constraint0;
+
+                for j in 1..self.dim {
+                    if dst_to_src[j] == 0
+                    {
+                        self.data[j + i * self.dim] = constraint0;
+                    }
+                    else {
+                        self.data[j + i * self.dim] = src.data[dst_to_src[j] + src.dim * dst_to_src[i]];
+                    }
+                }
+            }
+            else { // Insert new row.
+                for j in 0..self.dim {
+                    self.data[j + i * self.dim] = LS_INFINITY;
+                }
+            }
+            self.data[i + i * self.dim] = LE_ZERO;
+        }
+    }
+
+    // Based on the UDBM implementation
+    /// 0,      1,      2,      3,      4
+    /// 5,      6,      7,      8,      9
+    /// 10,     11,     12,     13,     14
+    /// 15,     16,     17,     18,     19
+    /// 20,     21,     22,     23,     24
+    /// is redrawn into
+    /// 0,      1,      4,       0,      0
+    /// 5,      0,      9,       5,      5
+    /// 10,     11,     0,       10,     10
+    /// inf,    inf,    inf,     0,      inf
+    /// inf,    inf,    inf,     inf,    0
+    /// With clock inputs
+    /// src_clocks: [true, true, true, false, false, false, false]
+    /// dst_clocks: [true, true, true, false, false, true, true]
+    /// It will also return a mapping of the src clocks to the dst clocks.
+    /// src_to_dst: [0, 1, 2, 0, 0, 3, 4]
+    pub fn shrink_expand(&self, src_clocks: &Vec<bool>, dst_clocks: &Vec<bool>) -> (DBM<Valid>, Vec<ClockIndex>) {
+        assert_eq!(src_clocks.len(), dst_clocks.len());
+        let (src_to_dst, dst_to_src) = self.compute_tables(src_clocks, dst_clocks);
+        let mut dst = DBM::init(dst_to_src.len());
+        dst.update_dbm(self, &dst_to_src);
+        return (dst, src_to_dst);
+    }
+
+    // Based on the UDBM implementation
     #[must_use]
     pub fn update_increment(self, clock: ClockIndex, inc: Bound) -> Self {
         assert!(clock > 0);
@@ -1296,6 +1389,9 @@ impl<T: DBMState> Display for DBM<T> {
 
 #[cfg(test)]
 mod test {
+    use crate::util::constraints::Inequality::LE;
+    use crate::util::constraints::{Bound};
+    use crate::util::constraints::raw_constants::{LE_ZERO, LS_INFINITY};
     use super::DBM;
     use crate::zones::rand_gen::random_dbm;
     use crate::zones::DBMRelation;
@@ -1367,6 +1463,70 @@ mod test {
             Some(())
         }
         test().unwrap()
+    }
+
+    #[test]
+    fn dbm_shrink_expand(){
+        let mut src = DBM::init(5);
+        for i in 1..25 {
+            src.data[i] = From::from(LE(i as Bound));
+        }
+
+        let src_bit = vec![true, true, false, false, true, false, false];
+        let dst_bit = vec![true, true, false, false, true, true, true];
+        let (dst, src_to_dst) = src.shrink_expand(&src_bit, &dst_bit);
+
+        assert_eq!(dst.dim, 5);
+        for i in 0..5 {
+            assert_eq!(dst.data[i + i * dst.dim], LE_ZERO);
+        }
+        assert_eq!(dst.data[0 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[1 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[2 + 4 * dst.dim], LS_INFINITY);
+        assert_eq!(dst.data[3 + 4 * dst.dim], LS_INFINITY);
+
+        assert_eq!(dst.data[0 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[2 + 1 * dst.dim], LE(9).into());
+        assert_eq!(dst.data[3 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[4 + 1 * dst.dim], LE(5).into());
+
+        assert_eq!(src_to_dst.len(), 7);
+        assert_eq!(src_to_dst[0], 0);
+        assert_eq!(src_to_dst[1], 1);
+        assert_eq!(src_to_dst[2], 0);
+        assert_eq!(src_to_dst[3], 0);
+        assert_eq!(src_to_dst[4], 2);
+    }
+
+    #[test]
+    fn dbm_shrink(){
+        let mut src = DBM::init(5);
+        for i in 1..25 {
+            src.data[i] = From::from(LE(i as Bound));
+        }
+
+        let src_bit = vec![true, true, false, false, true];
+        let (dst, src_to_dst) = src.shrink_expand(&src_bit, &src_bit);
+
+        assert_eq!(dst.dim, 3);
+        for i in 0..3 {
+            assert_eq!(dst.data[i + i * dst.dim], LE_ZERO);
+        }
+        assert_eq!(dst.data[1 + 0 * dst.dim], LE(1).into());
+        assert_eq!(dst.data[2 + 0 * dst.dim], LE(4).into());
+
+        assert_eq!(dst.data[0 + 1 * dst.dim], LE(5).into());
+        assert_eq!(dst.data[2 + 1 * dst.dim], LE(9).into());
+
+        assert_eq!(dst.data[0 + 2 * dst.dim], LE(20).into());
+        assert_eq!(dst.data[1 + 2 * dst.dim], LE(21).into());
+
+        assert_eq!(src_to_dst.len(), 5);
+        assert_eq!(src_to_dst[0], 0);
+        assert_eq!(src_to_dst[1], 1);
+        assert_eq!(src_to_dst[2], 0);
+        assert_eq!(src_to_dst[3], 0);
+        assert_eq!(src_to_dst[4], 2);
     }
 
     #[test]
